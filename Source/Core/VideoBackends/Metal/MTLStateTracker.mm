@@ -383,32 +383,35 @@ void Metal::StateTracker::EndRenderPass()
 
 void Metal::StateTracker::FlushEncoders()
 {
-  if (!m_current_render_cmdbuf)
-    return;
-  EndRenderPass();
-  // iCube bbox latch: if a gx draw this cmdbuf touched the bbox buffer, blit the 4 bbox values into
-  // the ring slot for this draw, ordered behind the fragment-stage download fence (updated in
-  // EndRenderPass). The blit rides this render cmdbuf, so it inherits the existing completion
-  // handler that advances m_last_finished_draw -> ReadLatestBBoxSnapshot knows when it's safe.
-  // Must endEncoding before the Sync() upload loop: Metal allows one open encoder per cmdbuf.
-  if (m_bbox_touched_this_cmdbuf && m_state.bbox && m_bbox_snapshot_buffer)
+  const bool needs_submit = m_current_render_cmdbuf;
+  if (needs_submit)
   {
-    const u32 slot = static_cast<u32>(m_current_draw % BBOX_RING);
-    id<MTLBlitCommandEncoder> snap = [m_current_render_cmdbuf blitCommandEncoder];
-    [snap setLabel:@"BBox Snapshot"];
-    if (m_state.bbox_download_fence)
-      [snap waitForFence:m_state.bbox_download_fence];  // after fragment-stage bbox writes
-    [snap copyFromBuffer:m_state.bbox
-            sourceOffset:0
-                toBuffer:m_bbox_snapshot_buffer
-       destinationOffset:slot * NUM_BBOX_VALUES * sizeof(BBoxType)
-                    size:NUM_BBOX_VALUES * sizeof(BBoxType)];
-    [snap endEncoding];
-    m_bbox_ring_draw[slot] = m_current_draw;  // tag the slot; retirement is gated by completion
-    m_bbox_touched_this_cmdbuf = false;
+    EndRenderPass();
+    // iCube bbox latch: if a gx draw this cmdbuf touched the bbox buffer, blit the 4 bbox values into
+    // the ring slot for this draw, ordered behind the fragment-stage download fence (updated in
+    // EndRenderPass). The blit rides this render cmdbuf, so it inherits the existing completion
+    // handler that advances m_last_finished_draw -> ReadLatestBBoxSnapshot knows when it's safe.
+    // Must endEncoding before the Sync() upload loop: Metal allows one open encoder per cmdbuf.
+    if (m_bbox_touched_this_cmdbuf && m_state.bbox && m_bbox_snapshot_buffer)
+    {
+      const u32 slot = static_cast<u32>(m_current_draw % BBOX_RING);
+      id<MTLBlitCommandEncoder> snap = [m_current_render_cmdbuf blitCommandEncoder];
+      [snap setLabel:@"BBox Snapshot"];
+      if (m_state.bbox_download_fence)
+        [snap waitForFence:m_state.bbox_download_fence];  // after fragment-stage bbox writes
+      [snap copyFromBuffer:m_state.bbox
+              sourceOffset:0
+                  toBuffer:m_bbox_snapshot_buffer
+         destinationOffset:slot * NUM_BBOX_VALUES * sizeof(BBoxType)
+                      size:NUM_BBOX_VALUES * sizeof(BBoxType)];
+      [snap endEncoding];
+      m_bbox_ring_draw[slot] = m_current_draw;  // tag the slot; retirement is gated by completion
+      m_bbox_touched_this_cmdbuf = false;
+    }
+    for (int i = 0; i <= static_cast<int>(UploadBuffer::Last); ++i)
+      Sync(m_upload_buffers[i]);
   }
-  for (int i = 0; i <= static_cast<int>(UploadBuffer::Last); ++i)
-    Sync(m_upload_buffers[i]);
+
   if (!m_manual_buffer_upload)
   {
     ASSERT(!m_upload_cmdbuf && "Should never be used!");
@@ -428,6 +431,10 @@ void Metal::StateTracker::FlushEncoders()
     m_texture_upload_encoder = nullptr;
     m_texture_upload_cmdbuf = nullptr;
   }
+
+  if (!needs_submit)
+    return;
+
   [m_current_render_cmdbuf
       addCompletedHandler:[backref = m_backref, draw = m_current_draw,
                            q = std::move(m_current_perf_query)](id<MTLCommandBuffer> buf) {
