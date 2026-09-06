@@ -203,6 +203,33 @@ jobs:
             -allowProvisioningUpdates "${AUTH[@]}" \
             CURRENT_PROJECT_VERSION="$BUILD" 2>&1 | tee -a /tmp/testflight.log
 
+      # Sentry symbolication. Project.swift carries an "Upload Debug Symbols to
+      # Sentry" build phase, but it is guarded on `which sentry-cli`, which no
+      # GitHub runner has — so every crash from a CI build arrived unsymbolicated
+      # (the 🤯 frames on ICUBE-1). Upload the archive's dSYMs explicitly here,
+      # after export so the build phase cannot run twice. Needs SENTRY_AUTH_TOKEN
+      # (an org auth token from https://provenance-emu.sentry.io/settings/auth-tokens/);
+      # warns and continues without it so symbol upload can never block a release.
+      - name: Upload dSYMs to Sentry
+        if: success()
+        continue-on-error: true
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: provenance-emu
+          SENTRY_PROJECT: icube
+          SENTRY_CLI_VERSION: '2.46.0'
+        run: |
+          set -euo pipefail
+          if [ -z "${SENTRY_AUTH_TOKEN}" ]; then
+            echo "::warning::SENTRY_AUTH_TOKEN not set — crashes from this build will be unsymbolicated in Sentry."
+            exit 0
+          fi
+          curl -fsSL -o "$RUNNER_TEMP/sentry-cli" \
+            "https://github.com/getsentry/sentry-cli/releases/download/${SENTRY_CLI_VERSION}/sentry-cli-Darwin-universal"
+          chmod +x "$RUNNER_TEMP/sentry-cli"
+          "$RUNNER_TEMP/sentry-cli" debug-files upload --include-sources \
+            "$RUNNER_TEMP/iCube-${{ matrix.platform }}.xcarchive/dSYMs"
+
       # xcbeautify-style filtering hides Run Script output, so the raw log is the
       # only place some failures appear.
       - name: Upload raw log on failure
