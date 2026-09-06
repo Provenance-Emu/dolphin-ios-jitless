@@ -52,3 +52,6 @@ CMakeLists.txt.user
 # iCube: build output is generated, never tracked — the xcframework dir and the CMake build dirs.
 /build/
 /build-*/
+
+# Local release credentials (see Source/iOS/App/.env.sample)
+.env
