@@ -370,6 +370,27 @@ jobs:
             && echo "Requested combined-feed refresh" \
             || echo "::warning::Feed dispatch failed; next Provenance build will refresh it"
 
+      # icube-emu.com has its OWN AltStore/SideStore feed (/api/altstore,
+      # /api/sidestore) and also hosts the IPA the combined feed above links to.
+      # Its deploy.yml fetches the current alpha at build time, but only runs on
+      # a push to that repo or on this dispatch -- nothing else ever told it a
+      # release happened, which is why the site served a day-old IPA while
+      # GitHub had the new one. Same PAT, same event type deploy.yml listens for.
+      - name: Refresh icube-emu.com feed
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.FEED_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::warning::FEED_DISPATCH_TOKEN not set — skipping icube-emu.com refresh."
+            exit 0
+          fi
+          gh api repos/Provenance-Emu/icube-emu.github.io/dispatches \
+            -f event_type=companion-release \
+            -F client_payload[app]=icube \
+            && echo "Requested icube-emu.com redeploy" \
+            || echo "::warning::icube-emu.com dispatch failed; run its deploy.yml by hand"
+
       - name: Update pinned tracking issue
         continue-on-error: true
         run: |
