@@ -8,7 +8,7 @@ Source/Core/Common/scmrev.h
 # Ignore files output by build
 /cmake-build-debug
 /cmake-build-release
-/[Bb]uild*/
+/[Bb]uild*/*
 /[Bb]inary*/
 /obj/
 # Ignore files output by Android cmake build
@@ -50,7 +50,16 @@ CMakeLists.txt.user
 /__pycache__
 
 # iCube: build output is generated, never tracked — the xcframework dir and the CMake build dirs.
-/build/
+# Build output is ignored — EXCEPT the packaged xcframework, which is tracked on
+# purpose. Provenance consumes this repo as a submodule and PVDolphin links
+# build/xcframework/PVlibDolphin.xcframework as a file reference that Xcode
+# validates before any script phase runs, so a checkout without the binary
+# cannot build (Provenance #3677 was reverted for exactly that). Refresh with
+# `python3 BuildiOSXCFramework.py --platforms OS64 SIMULATORARM64 TVOS SIMULATOR_TVOS`
+# and commit the result. Git will not descend into an ignored directory, so
+# `/[Bb]uild*/` above is written as `/[Bb]uild*/*` — a negation under the
+# directory form would be dead.
+!/build/xcframework/
 /build-*/
 
 # Local release credentials (see Source/iOS/App/.env.sample)
