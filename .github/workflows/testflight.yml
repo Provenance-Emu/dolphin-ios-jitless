@@ -100,28 +100,55 @@ jobs:
         working-directory: Source/iOS/App
         run: tuist generate --no-open
 
-      # Automatic signing needs a distribution certificate in a keychain. The
-      # profiles come from -allowProvisioningUpdates using the ASC API key, so
-      # only the cert is imported here.
-      - name: Import signing certificate
+      # Automatic signing needs TWO identities in the keychain. The profiles come
+      # from -allowProvisioningUpdates using the ASC API key, so only certs are
+      # imported here.
+      #
+      # Why two: `xcodebuild archive` signs the ARCHIVE with an Apple Development
+      # identity; only -exportArchive re-signs with Distribution. With just the
+      # distribution cert present, -allowProvisioningUpdates minted a fresh
+      # Development certificate on EVERY run, whose private key died with the
+      # runner. 19 of those corpses accumulated Sept 2–5 2026 across this repo and
+      # Provenance until Apple's per-account cap hit — run 33964414142:
+      #   error: Choose a certificate to revoke. Your account has reached the
+      #          maximum number of certificates.
+      # DEV_CERT_P12 is a Development identity whose key we keep (minted with
+      # Provenance's Scripts/asc_certs.py create), so xcodebuild reuses it.
+      # Certificates are team-wide: the same .p12 is set on Provenance.
+      - name: Import signing certificates
         env:
           CERT_P12: ${{ secrets.CERT_P12 }}
           P12_PASS: ${{ secrets.P12_PASS }}
+          DEV_CERT_P12: ${{ secrets.DEV_CERT_P12 }}
+          DEV_P12_PASS: ${{ secrets.DEV_P12_PASS }}
         run: |
           set -euo pipefail
-          [ -n "${CERT_P12}" ] || { echo "::error::CERT_P12 is not set — cannot sign."; exit 1; }
+          for v in CERT_P12 DEV_CERT_P12; do
+            [ -n "${!v}" ] || { echo "::error::$v is not set — cannot sign."; exit 1; }
+          done
           KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
           echo "::add-mask::$KEYCHAIN_PASSWORD"
           KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
-          echo -n "$CERT_P12" | base64 --decode -o "$RUNNER_TEMP/dist.p12"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           security set-keychain-settings -lut 21600 "$KEYCHAIN"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          security import "$RUNNER_TEMP/dist.p12" -P "$P12_PASS" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          import_p12() {  # $1 = base64 p12, $2 = password
+            local path="$RUNNER_TEMP/import.p12"
+            echo -n "$1" | base64 --decode -o "$path"
+            security import "$path" -P "$2" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+            rm -f "$path"
+          }
+          import_p12 "$CERT_P12" "$P12_PASS"
+          import_p12 "$DEV_CERT_P12" "$DEV_P12_PASS"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
           security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
-          rm -f "$RUNNER_TEMP/dist.p12"
           security find-identity -v -p codesigning "$KEYCHAIN"
+          # Both must be present, or the archive step silently mints a new
+          # Development cert and refills the account cap.
+          for want in "Apple Distribution" "Apple Development"; do
+            security find-identity -v -p codesigning "$KEYCHAIN" | grep -q "$want" \
+              || { echo "::error::no '$want' identity after import"; exit 1; }
+          done
 
       - name: Archive and upload
         env:
