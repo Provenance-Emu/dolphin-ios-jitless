@@ -23,6 +23,7 @@
 #include "VideoCommon/FrameDumper.h"
 #include "VideoCommon/PostProcessing.h"
 #include "WiimoteEmu/WiimoteEmu.h"
+#include "InputCommon/ControllerEmu/ControllerEmu.h"
 #import "Core/Config/WiimoteSettings.h"
 #import "Core/HW/GCPad.h"
 #import "Core/HW/SI/SI_Device.h"
@@ -250,12 +251,24 @@ extern std::unique_ptr<FramebufferManager> g_framebuffer_manager;
 }
 
 + (void)setWiiIMUPointEnabled:(BOOL)enabled {
-  // Enable/disable Wiimote IMUPoint group to avoid fighting with touch IR
-  auto& system = Core::System::GetInstance();
-  Core::RunOnCPUThread(system, [enabled]() {
-    auto* group = Wiimote::GetWiimoteGroup(0, WiimoteEmu::WiimoteGroup::IMUPoint);
-    if (group) group->enabled.SetValue(enabled);
-  }, true);
+  // Enable/disable Wiimote IMUPoint group to avoid fighting with touch IR.
+  //
+  // This used to be Core::RunOnCPUThread(..., wait_for_completion = true) and was
+  // the only blocking CPU-thread call in the app layer. It runs on the MAIN thread
+  // from SwiftUI (.onAppear/.onDisappear of the Wii touch pads, and again at
+  // emulation-screen setup), so on every Wii boot the UI thread sat in
+  // PauseAndLock waiting for the CPU thread to acknowledge Stepping. When that
+  // acknowledgement never came the app was exactly as reported: emulation kept
+  // rendering and playing audio, every native control was dead, force-quit only.
+  // GameCube titles never call this, which is why only Wii games hung.
+  //
+  // Pausing the core was never needed: emulated-controller settings are guarded
+  // by the ControllerEmu state lock, which is how DolphinQt's mapping UI flips
+  // the same groups from its own UI thread. Take the lock, set, return.
+  const auto lock = ControllerEmu::EmulatedController::GetStateLock();
+  auto* group = Wiimote::GetWiimoteGroup(0, WiimoteEmu::WiimoteGroup::IMUPoint);
+  if (group)
+    group->enabled.SetValue(enabled);
 }
 
 + (CGRect)currentVideoContentRect {
