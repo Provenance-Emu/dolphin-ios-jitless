@@ -22,6 +22,8 @@
 #include "Core/System.h"
 #include "VideoCommon/VideoConfig.h"
 
+#import "HostQueue.h"
+
 static NSString* StateName(Core::State s) {
   switch (s) {
     case Core::State::Uninitialized: return @"uninitialized";
@@ -38,23 +40,37 @@ static NSString* StateName(Core::State s) {
 // LOG_WINDOW_LISTENER is otherwise only registered by DolphinQt's LogWidget, which iOS
 // doesn't build. (Verified via `grep -rn RegisterListener` across Source/Core + Source/iOS.)
 namespace {
-std::mutex g_log_mutex;
+// Guards g_log_ring plus all three handler globals below. Every access only holds the lock
+// long enough to append to the ring or copy a block pointer in/out -- the block itself is
+// always invoked with the lock released, so a handler is free to call back into this bridge
+// (e.g. re-register itself) without risking self-deadlock.
+std::mutex g_handler_mutex;
 std::deque<std::string> g_log_ring;
 void (^g_log_handler)(NSString*, NSString*) = nil;
+void (^g_state_handler)(NSString*) = nil;
+void (^g_config_handler)(void) = nil;
+
 class RingListener : public Common::Log::LogListener {
  public:
   void Log(Common::Log::LogLevel level, const char* msg) override {
-    std::lock_guard<std::mutex> lk(g_log_mutex);
-    g_log_ring.emplace_back(msg);
-    if (g_log_ring.size() > 2000) g_log_ring.pop_front();
-    if (g_log_handler && level <= Common::Log::LogLevel::LWARNING)
-      g_log_handler(level == Common::Log::LogLevel::LERROR ? @"ERROR" : @"WARN", @(msg));
+    void (^handler)(NSString*, NSString*) = nil;
+    {
+      std::lock_guard<std::mutex> lk(g_handler_mutex);
+      g_log_ring.emplace_back(msg);
+      if (g_log_ring.size() > 2000) g_log_ring.pop_front();
+      // Forward only WARN/ERROR. LogLevel numbers LNOTICE=1, LERROR=2, LWARNING=3 (severity
+      // does NOT increase monotonically with the enum value), so `level <= LWARNING` would
+      // incorrectly also forward LNOTICE -- which is startup/OSReport spam, not a real
+      // warning or error.
+      if (level == Common::Log::LogLevel::LERROR || level == Common::Log::LogLevel::LWARNING)
+        handler = g_log_handler;
+    }
+    if (handler) {
+      NSString* levelName = level == Common::Log::LogLevel::LERROR ? @"ERROR" : @"WARN";
+      handler(levelName, @(msg));
+    }
   }
 };
-std::once_flag g_log_once;
-void (^g_state_handler)(NSString*) = nil;
-int g_state_cb_handle = -1;
-Config::ConfigChangedCallbackID g_config_cb;
 }  // namespace
 
 @implementation DOLDebugBridge
@@ -62,27 +78,35 @@ Config::ConfigChangedCallbackID g_config_cb;
 + (NSString*)coreState { return StateName(Core::GetState(Core::System::GetInstance())); }
 
 + (BOOL)pause {
-  auto& sys = Core::System::GetInstance();
-  if (!Core::IsRunning(sys)) return NO;
-  Core::SetState(sys, Core::State::Paused);
+  if (!Core::IsRunning(Core::System::GetInstance())) return NO;
+  // Core::SetState ultimately reaches PauseAndLock, which is host-thread-only.
+  DOLHostQueueRunSync(^{
+    Core::SetState(Core::System::GetInstance(), Core::State::Paused);
+  });
   return YES;
 }
 + (BOOL)resume {
-  auto& sys = Core::System::GetInstance();
-  if (!Core::IsRunning(sys)) return NO;
-  Core::SetState(sys, Core::State::Running);
+  if (!Core::IsRunning(Core::System::GetInstance())) return NO;
+  DOLHostQueueRunSync(^{
+    Core::SetState(Core::System::GetInstance(), Core::State::Running);
+  });
   return YES;
 }
 
 + (NSInteger)frameAdvance:(NSInteger)n timeoutSeconds:(double)timeout {
-  auto& sys = Core::System::GetInstance();
   NSInteger done = 0;
   for (NSInteger i = 0; i < n; i++) {
-    if (Core::GetState(sys) != Core::State::Paused) break;
-    const uint64_t before = sys.GetMovie().GetCurrentFrame();
-    Core::DoFrameStep(sys);
+    if (Core::GetState(Core::System::GetInstance()) != Core::State::Paused) break;
+    const uint64_t before = Core::System::GetInstance().GetMovie().GetCurrentFrame();
+    // Core::DoFrameStep is `// NOTE: Host Thread` (Core.cpp) -- run it on the host queue and
+    // wait for that single dispatch to finish. The "did the frame actually land" poll below
+    // stays OFF the host queue (it only reads atomics), so it can never block the host thread.
+    DOLHostQueueRunSync(^{
+      Core::DoFrameStep(Core::System::GetInstance());
+    });
     NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
-    while (!(Core::GetState(sys) == Core::State::Paused && sys.GetMovie().GetCurrentFrame() > before)) {
+    while (!(Core::GetState(Core::System::GetInstance()) == Core::State::Paused &&
+             Core::System::GetInstance().GetMovie().GetCurrentFrame() > before)) {
       if ([deadline timeIntervalSinceNow] < 0) return done;
       [NSThread sleepForTimeInterval:0.002];
     }
@@ -94,10 +118,14 @@ Config::ConfigChangedCallbackID g_config_cb;
 + (uint64_t)frameCount { return Core::System::GetInstance().GetMovie().GetCurrentFrame(); }
 
 + (nullable NSData*)screenshotPNGWithTimeout:(double)timeout {
-  auto& sys = Core::System::GetInstance();
-  if (!Core::IsRunning(sys)) return nil;
+  if (!Core::IsRunning(Core::System::GetInstance())) return nil;
   const std::string name = "debugapi-" + std::to_string((long long)([[NSDate date] timeIntervalSince1970] * 1000));
-  Core::SaveScreenShot(name);
+  // Core::SaveScreenShot must run on the host thread. The screenshot file it triggers is
+  // written asynchronously, so the poll loop below stays off the host queue -- it only reads
+  // the filesystem and never blocks the host thread.
+  DOLHostQueueRunSync(^{
+    Core::SaveScreenShot(name);
+  });
   // SaveScreenShot writes <Screenshots>/<GameID>/<name>.png asynchronously (Core::Core.cpp
   // GenerateScreenshotFolderPath + SaveScreenShot(string_view)).
   const std::string gameId = SConfig::GetInstance().GetGameID();
@@ -120,21 +148,25 @@ Config::ConfigChangedCallbackID g_config_cb;
 }
 
 + (BOOL)loadStateSlot:(NSInteger)slot {
-  auto& sys = Core::System::GetInstance();
-  if (!Core::IsRunning(sys)) return NO;
-  State::Load(sys, (int)slot);
+  if (!Core::IsRunning(Core::System::GetInstance())) return NO;
+  // State::Load reaches PauseAndLock -- host-thread-only, same as pause/resume above.
+  DOLHostQueueRunSync(^{
+    State::Load(Core::System::GetInstance(), (int)slot);
+  });
   return YES;
 }
 + (BOOL)loadStatePath:(NSString*)path {
-  auto& sys = Core::System::GetInstance();
-  if (!Core::IsRunning(sys) || ![[NSFileManager defaultManager] fileExistsAtPath:path]) return NO;
-  State::LoadAs(sys, path.UTF8String);
+  if (!Core::IsRunning(Core::System::GetInstance()) || ![[NSFileManager defaultManager] fileExistsAtPath:path]) return NO;
+  DOLHostQueueRunSync(^{
+    State::LoadAs(Core::System::GetInstance(), path.UTF8String);
+  });
   return YES;
 }
 + (BOOL)saveStateSlot:(NSInteger)slot {
-  auto& sys = Core::System::GetInstance();
-  if (!Core::IsRunning(sys)) return NO;
-  State::Save(sys, (int)slot, /*wait=*/true);
+  if (!Core::IsRunning(Core::System::GetInstance())) return NO;
+  DOLHostQueueRunSync(^{
+    State::Save(Core::System::GetInstance(), (int)slot, /*wait=*/true);
+  });
   return YES;
 }
 
@@ -174,7 +206,7 @@ Config::ConfigChangedCallbackID g_config_cb;
 }
 
 + (NSArray<NSString*>*)logTail:(NSInteger)count {
-  std::lock_guard<std::mutex> lk(g_log_mutex);
+  std::lock_guard<std::mutex> lk(g_handler_mutex);
   NSMutableArray* out = [NSMutableArray array];
   size_t start = g_log_ring.size() > (size_t)count ? g_log_ring.size() - count : 0;
   for (size_t i = start; i < g_log_ring.size(); i++) [out addObject:@(g_log_ring[i].c_str())];
@@ -182,27 +214,50 @@ Config::ConfigChangedCallbackID g_config_cb;
 }
 
 + (void)setConfigChangedHandler:(void (^)(void))handler {
-  static bool registered = false;
-  static void (^stored)(void) = nil;
-  stored = handler;
-  if (!registered) {
-    g_config_cb = Config::AddConfigChangedCallback([] { if (stored) stored(); });
-    registered = true;
+  {
+    std::lock_guard<std::mutex> lk(g_handler_mutex);
+    g_config_handler = handler;
   }
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    // Callback ID is intentionally discarded: this listener is never removed for the
+    // lifetime of the process, so there is nothing to do with the returned ID.
+    (void)Config::AddConfigChangedCallback([] {
+      void (^handler)(void) = nil;
+      {
+        std::lock_guard<std::mutex> lk(g_handler_mutex);
+        handler = g_config_handler;
+      }
+      if (handler) handler();
+    });
+  });
 }
 + (void)setLogHandler:(void (^)(NSString*, NSString*))handler {
-  std::call_once(g_log_once, [] {
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
     auto* mgr = Common::Log::LogManager::GetInstance();
     mgr->RegisterListener(Common::Log::LogListener::LOG_WINDOW_LISTENER, std::make_unique<RingListener>());
     mgr->EnableListener(Common::Log::LogListener::LOG_WINDOW_LISTENER, true);
   });
-  std::lock_guard<std::mutex> lk(g_log_mutex);
+  std::lock_guard<std::mutex> lk(g_handler_mutex);
   g_log_handler = handler;
 }
 + (void)setCoreStateHandler:(void (^)(NSString*))handler {
-  g_state_handler = handler;
-  if (g_state_cb_handle < 0)
-    g_state_cb_handle = Core::AddOnStateChangedCallback([](Core::State s) { if (g_state_handler) g_state_handler(StateName(s)); });
+  {
+    std::lock_guard<std::mutex> lk(g_handler_mutex);
+    g_state_handler = handler;
+  }
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    Core::AddOnStateChangedCallback([](Core::State s) {
+      void (^handler)(NSString*) = nil;
+      {
+        std::lock_guard<std::mutex> lk(g_handler_mutex);
+        handler = g_state_handler;
+      }
+      if (handler) handler(StateName(s));
+    });
+  });
 }
 
 @end
