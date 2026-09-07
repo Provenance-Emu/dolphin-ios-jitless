@@ -15,9 +15,13 @@ async def collect_events(base: str, kinds: list[str] | None, seconds: float) -> 
                 raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
             except asyncio.TimeoutError:
                 break
+            except websockets.exceptions.ConnectionClosed:
+                break
             try:
                 ev = json.loads(raw)
             except json.JSONDecodeError:
+                continue
+            if not isinstance(ev, dict):
                 continue
             if kinds is None or ev.get("kind") in kinds:
                 out.append(ev)
