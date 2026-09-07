@@ -86,12 +86,20 @@ def run_on_device(
         dev.post("/api/debug/frame-advance", {"n": sc.frames})
         return dev.get_bytes("/api/debug/screenshot")
     finally:
-        # Controller ruling (Task 13 fix round 1): run_on_device must not
-        # leave the device mid-scenario on any exception -- restore the
-        # resolution pin (only if it was actually applied) and always
-        # resume the core, so a raising step never leaves it paused.
-        _restore_resolution(dev, had_key, prev_value)
-        dev.post("/api/debug/resume")
+        # Controller ruling (Task 13 fix round 2): cleanup steps are
+        # independent best-effort operations. If the restore POST fails, the
+        # resume POST is still attempted (safe even if the scenario failed
+        # before pause -- the route returns 409 → DeviceError → swallowed).
+        try:
+            _restore_resolution(dev, had_key, prev_value)
+        except Exception as e:
+            if warnings is not None:
+                warnings.append(f"restore gfxEfbScale failed: {e}")
+        try:
+            dev.post("/api/debug/resume")
+        except Exception as e:
+            if warnings is not None:
+                warnings.append(f"resume failed: {e}")
 
 
 def append_run(cfg: Config, record: dict) -> None:

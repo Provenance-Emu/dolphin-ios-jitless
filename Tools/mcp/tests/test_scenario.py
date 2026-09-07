@@ -73,6 +73,32 @@ def test_run_on_device_restores_on_exception():
     assert ("/api/settings/gfxEfbScale", {"value": 3}) in d.calls
     assert ("/api/debug/resume", None) in d.calls
 
+def test_run_on_device_resumes_even_if_restore_fails():
+    # Controller ruling (Task 13 fix round 2): cleanup steps are independent
+    # best-effort operations. If the restore POST raises, the resume POST is
+    # still attempted, and the exception is caught + recorded as a warning.
+    # Both cleanup steps run even if one fails; the original exception from
+    # the scenario (if any) still propagates.
+    class PartialFailureDevice(FakeDevice):
+        def post(self, path, body=None):
+            # Restore POST (value != 1) raises, but other POSTs succeed
+            if path == "/api/settings/gfxEfbScale" and body and body.get("value") != 1:
+                raise DeviceError("restore failed")
+            return super().post(path, body)
+
+    d = PartialFailureDevice(solid("red"), settings={"gfxEfbScale": {"value": 3}})
+    warnings: list[str] = []
+    png = run_on_device(d, Scenario("SMNE01", 30), boot=lambda g: None, warnings=warnings)
+
+    # Function returns screenshot normally (exception was caught, not propagated)
+    assert png == d.png
+
+    # Resume was still called even though restore failed
+    assert ("/api/debug/resume", None) in d.calls
+
+    # Failure was recorded as a warning
+    assert warnings and "restore" in warnings[0].lower()
+
 def test_compare_pass_and_fail(tmp_path, monkeypatch):
     cfg = Config(dolphin_app=Path("/x"), cpu_core=5, games={"SMNE01": Path("/x.rvz")}, home=tmp_path)
     monkeypatch.setattr("icube_debug.scenario.dump_frames", lambda *a, **k: _write(tmp_path / "up.png", solid("red")))
