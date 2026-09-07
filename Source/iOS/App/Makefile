@@ -7,7 +7,7 @@
 #   cd Source/iOS/App && make testflight
 #
 .PHONY: help xcframework generate dev open lint format testflight testflight-tvos \
-	testflight-all release-dry clean
+	testflight-all release-dry clean mcp-install mcp-test mcp-smoke
 
 # Repo root — BuildiOSXCFramework.py and ExportOptions/ live there, not here.
 ROOT := $(shell git rev-parse --show-toplevel)
@@ -38,6 +38,9 @@ help:
 	@echo "  make testflight-all  — both, one after the other (never in parallel)"
 	@echo "  make release-dry  — print the release commands without executing them"
 	@echo "  make clean        — remove generated project + archives"
+	@echo "  make mcp-install  — uv sync the Tools/mcp debug MCP project"
+	@echo "  make mcp-test     — run Tools/mcp's pytest suite"
+	@echo "  make mcp-smoke    — live smoke test against a device on iproxy (needs a game booted)"
 	@echo ""
 	@echo "First run on a fresh clone:"
 	@echo "  make xcframework && make generate && make testflight"
@@ -88,3 +91,12 @@ release-dry:
 
 clean:
 	rm -rf iCube.xcodeproj iCube.xcworkspace Derived "$(ROOT)/build/archives" "$(ROOT)/build/export"
+
+# --- Debug MCP (Tools/mcp) ---------------------------------------------------
+mcp-install:
+	cd "$(ROOT)/Tools/mcp" && uv sync
+mcp-test:
+	cd "$(ROOT)/Tools/mcp" && uv run pytest -q
+# Needs a device on `iproxy 8723 8723` with a game booted.
+mcp-smoke:
+	cd "$(ROOT)/Tools/mcp" && uv run python -m icube_debug.smoke

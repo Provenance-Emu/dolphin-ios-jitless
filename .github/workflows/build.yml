@@ -7,8 +7,16 @@ on:
   # still pointing there.
   push:
     branches: [ develop, master ]
+    paths-ignore:
+      - 'docs/**'
+      - 'Tools/mcp/**'
+      - '**/*.md'
   pull_request:
     branches: [ develop, master ]
+    paths-ignore:
+      - 'docs/**'
+      - 'Tools/mcp/**'
+      - '**/*.md'
   workflow_dispatch:
 
 jobs:
