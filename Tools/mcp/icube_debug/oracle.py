@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 import re
 import shutil
 import subprocess, tempfile, time
@@ -109,8 +110,11 @@ def dump_frames(cfg: Config, game_id: str, frames: int, overrides: dict[str, str
         raise OracleError(f"Dolphin not found at {cfg.dolphin_app}")
 
     user_dir = Path(tempfile.mkdtemp(prefix="icube-oracle-"))
-    stderr_path = Path(tempfile.mkstemp(prefix="icube-oracle-stderr-", suffix=".log")[1])
+    fd, stderr_path_str = tempfile.mkstemp(prefix="icube-oracle-stderr-", suffix=".log")
+    stderr_path = Path(stderr_path_str)
+    os.close(fd)  # Close fd immediately; we'll open it with open() below
     proc: subprocess.Popen | None = None
+    frame_path: Path | None = None
     try:
         with open(stderr_path, "wb") as stderr_file:
             proc = subprocess.Popen(
@@ -119,9 +123,20 @@ def dump_frames(cfg: Config, game_id: str, frames: int, overrides: dict[str, str
             )
             frame_path = _wait_for_frame(proc, user_dir, frames, stderr_path, timeout)
 
+        # Stop Dolphin before copying the frame to ensure it's not still writing
+        if proc is not None:
+            proc.terminate()
+            try:
+                proc.wait(5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            proc = None
+
+        # Sanitise game_id: keep only [A-Za-z0-9_-]
+        safe_game_id = re.sub(r"[^A-Za-z0-9_-]", "", game_id)
         dest_dir = cfg.home / "oracle-frames"
         dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / f"{game_id}-{frames}-{int(time.time() * 1000)}.png"
+        dest = dest_dir / f"{safe_game_id}-{frames}-{int(time.time() * 1000)}.png"
         shutil.copyfile(frame_path, dest)
         return dest
     finally:

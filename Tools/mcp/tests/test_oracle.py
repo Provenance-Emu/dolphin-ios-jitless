@@ -153,3 +153,50 @@ def test_dump_frames_raises_when_dolphin_exits_without_frames(tmp_path, monkeypa
 
     with pytest.raises(OracleError, match="exited"):
         dump_frames(cfg, "TEST", 0)
+
+def test_dump_frames_does_not_leak_fds(tmp_path, monkeypatch):
+    import os
+    calls = []
+
+    class FakePopen:
+        def __init__(self, cmd, stdout=None, stderr=None):
+            self.cmd = cmd
+            self._returncode = None
+            self.terminated = False
+            self.killed = False
+            user_dir = Path(cmd[cmd.index("-u") + 1])
+            frames_dir = user_dir / "Dump" / "Frames"
+            frames_dir.mkdir(parents=True, exist_ok=True)
+            for i in range(5):
+                (frames_dir / f"framedump_{i}.png").write_bytes(b"fake-png-data")
+            calls.append(self)
+
+        def poll(self):
+            return self._returncode
+
+        def terminate(self):
+            self.terminated = True
+
+        def wait(self, timeout=None):
+            return 0
+
+        def kill(self):
+            self.killed = True
+
+    monkeypatch.setattr("icube_debug.oracle.subprocess.Popen", FakePopen)
+
+    cfg = Config(
+        dolphin_app=_fake_dolphin_app(tmp_path),
+        cpu_core=5,
+        games={"TEST": tmp_path / "game.rvz"},
+        home=tmp_path / "home",
+    )
+
+    # Count open fds before and after 5 calls
+    fd_count_before = len(os.listdir("/dev/fd"))
+    for _ in range(5):
+        dump_frames(cfg, "TEST", 2)
+    fd_count_after = len(os.listdir("/dev/fd"))
+
+    # The fd count should be the same (no leaks)
+    assert fd_count_before == fd_count_after, f"fd leak detected: {fd_count_before} before, {fd_count_after} after"
