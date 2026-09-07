@@ -116,7 +116,7 @@ key. `"PerGame"` is the user-editable Local GameSettings INI layer;
 | `GET` | `/api/debug/frame-count` | — | `{frame_count}` — the emulated frame counter |
 | `GET` | `/api/debug/screenshot` | — | **raw `image/png` bytes**, not the JSON envelope; `504` if no screenshot lands within 3s |
 | `GET` | `/api/debug/build-info` | — | SCM revision/branch, app version/build, configuration |
-| `GET` | `/api/debug/render-state` | — | runtime render-relevant config/state snapshot (backend, internal resolution, active hacks, etc.) |
+| `GET` | `/api/debug/render-state` | — | mix of runtime and configured state, distinguished by field name. Runtime (actually observed): backend, internal resolution, active hacks, and `vi_skip_active` (from `Core::System::GetInstance().GetCoreTiming().GetVISkip()`). Configured (from `Config`, NOT verified against the running core — suffixed `_configured`): `cpu_core_configured`, `dual_core_configured`, `vi_skip_mode_configured`, `overclock_enable_configured`, `overclock_configured`, `vi_overclock_configured` |
 | `GET` | `/api/health` | — | `{build_sha, config, game_id, core_state, fps, vps}` |
 | `GET` | `/api/logs?tail=N` | — | `{lines: [...]}` — last `N` log lines (`N` defaults to `200`; must be a non-negative integer if given) |
 

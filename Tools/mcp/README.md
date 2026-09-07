@@ -31,7 +31,7 @@ uv sync
 ## Registering with Claude Code
 
 ```bash
-claude mcp add icube -- uv --directory /ABS/PATH/TO/Tools/mcp run python -m icube_debug.server
+claude mcp add icube -- uv --directory /ABS/PATH/TO/Tools/mcp run icube-debug-mcp
 ```
 
 Use an absolute path to `Tools/mcp` (Claude Code launches the server from
@@ -39,16 +39,12 @@ its own working directory, not this one). It speaks MCP over stdio and
 blocks waiting for a client, so don't run it directly in a terminal you
 plan to keep using.
 
-`pyproject.toml` also declares a console-script entry point
-(`icube-debug-mcp = "icube_debug.server:main"`), so `uv run icube-debug-mcp`
-is the intended short form. As shipped, though, `uv sync` treats this
-project as a "virtual" (unpackaged) project and skips installing that
-script — `uv sync` prints `Skipping installation of entry points
-(project.scripts) ... because this project is not packaged` and `uv run
-icube-debug-mcp` then fails with `Failed to spawn`. Add `[tool.uv]` /
-`package = true` to `pyproject.toml` to make `uv sync` install the console
-script (verified locally); until then, use the `python -m
-icube_debug.server` form above.
+`pyproject.toml` declares a console-script entry point
+(`icube-debug-mcp = "icube_debug.server:main"`) and `[tool.uv] package =
+true`, so `uv sync` installs it and `uv run icube-debug-mcp` works directly
+(verified locally: prints the FastMCP startup banner then blocks on stdio).
+The equivalent `uv run python -m icube_debug.server` form still works too
+if you prefer it.
 
 ## Device settings keys vs. oracle keys — do not mix these up
 
@@ -99,8 +95,11 @@ A five-step loop for investigating a rendering difference:
 
 1. `health` — confirm the device is reachable and see what game/build is
    currently running.
-2. `render_state` — see what's *actually* active (backend, CPU core,
-   hacks), not just what's configured.
+2. `render_state` — see what's *actually* active at runtime (backend,
+   internal resolution, vertex loader, active hacks, whether VI-skip is
+   currently in effect), alongside the *configured* CPU core, dual-core, and
+   clock settings (`*_configured` fields — not verified against the running
+   core; there's no cheap way to read which CPU core is actually in use).
 3. `snapshot_save(name="before")` — capture every setting's current state.
 4. `settings_set(key=..., value=...)` — make the change you want to test.
 5. `snapshot_diff(a="before", b="after")` after a second snapshot, or
@@ -113,6 +112,16 @@ the game to already be **booted and paused at frame 0** on the device —
 there is no MCP route to boot a game yet (`POST /api/debug/boot` is a
 follow-up; see the spec's recorded follow-ups). Boot and pause manually
 first.
+
+**`compare_with_upstream`'s determinism guard will usually say
+"indeterminate" until `/api/debug/boot` exists.** It runs the scenario on
+the device twice and compares the two screenshots before trusting a
+device-vs-upstream comparison; without a boot route, the second run can't
+restart from the same frame-0 origin as the first (it starts from wherever
+the first run left the core), so the two device runs frequently disagree
+and the guard reports `indeterminate` rather than `pass`/`fail`. This is
+expected today, not a bug — re-boot and re-pause the game by hand between
+investigations if you need a clean comparison.
 
 ## Manual smoke test (needs a real device)
 

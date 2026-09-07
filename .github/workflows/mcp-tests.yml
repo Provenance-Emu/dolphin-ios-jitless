@@ -1,0 +1,39 @@
+name: MCP tests
+
+# Tests for the icube-debug MCP server (Tools/mcp). This is a pure-Python
+# package with no dependency on the Dolphin/iCube source tree, so it runs on
+# a cheap GitHub-hosted Linux runner instead of the macOS build fleet, and is
+# scoped (via `paths`) to only fire when Tools/mcp itself changes.
+
+on:
+  push:
+    paths:
+      - 'Tools/mcp/**'
+      - '.github/workflows/mcp-tests.yml'
+  pull_request:
+    paths:
+      - 'Tools/mcp/**'
+      - '.github/workflows/mcp-tests.yml'
+
+concurrency:
+  group: mcp-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    name: pytest (Tools/mcp)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        # No submodules: the MCP package doesn't touch the Dolphin/iCube tree.
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        working-directory: Tools/mcp
+        run: uv sync --all-extras
+
+      - name: Run tests
+        working-directory: Tools/mcp
+        run: uv run pytest -q
