@@ -64,3 +64,6 @@ CMakeLists.txt.user
 
 # Local release credentials (see Source/iOS/App/.env.sample)
 .env
+
+# subagent-driven-development scratch
+.superpowers/
