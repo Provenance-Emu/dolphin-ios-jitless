@@ -50,6 +50,21 @@ private func parseBody(_ body: Data?) -> [String: Any]? {
   return dict
 }
 
+/// Parses a request body as a JSON object, returning an empty dict for a
+/// missing or empty body, nil for a present-but-non-object body, or the dict
+/// for a valid JSON object. Used by routes that want to support optional
+/// bodies with sensible defaults.
+private func parseOptionalBody(_ body: Data?) -> [String: Any]? {
+  guard let body, !body.isEmpty else {
+    return [:]
+  }
+  guard let obj = try? JSONSerialization.jsonObject(with: body),
+        let dict = obj as? [String: Any] else {
+    return nil
+  }
+  return dict
+}
+
 /// Returns `value` as an `Int` only if it is a JSON number encoding a whole
 /// number. Rejects JSON booleans (Foundation bridges `true`/`false` to
 /// `NSNumber`, which would otherwise pass an `as? NSNumber` check) and
@@ -255,7 +270,7 @@ final class DebugAPIRoutes {
 
     // POST /api/debug/savestate  body {"slot":N}, slot optional (defaults to 1) but must be an Int if present
     server.addCustomHandler(forMethod: "POST", path: "/api/debug/savestate") { _, _, _, body in
-      guard let dict = parseBody(body) else {
+      guard let dict = parseOptionalBody(body) else {
         return ["ok": false, "status": 400, "error": bodyMustBeJSONObjectError]
       }
       let slot: Int
