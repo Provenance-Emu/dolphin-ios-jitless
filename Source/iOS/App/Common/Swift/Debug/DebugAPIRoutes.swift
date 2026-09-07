@@ -18,21 +18,46 @@
 //   GET  /api/health                 -> build/game/core-state/perf summary
 //   POST /api/debug/pause            -> pause the running core
 //   POST /api/debug/resume           -> resume the paused core
-//   POST /api/debug/frame-advance    body {"n":N} -> step N frames while paused
+//   POST /api/debug/frame-advance    body {"n":N} (required, 1...600) -> step N frames while paused
 //   GET  /api/debug/frame-count      -> emulated frame counter
-//   POST /api/debug/savestate        body {"slot":N} -> save to slot N
-//   POST /api/debug/loadstate        body {"slot":N} or {"path":P} -> load a state
+//   POST /api/debug/savestate        body {"slot":N=1} -> save to slot N
+//   POST /api/debug/loadstate        body {"slot":N} or {"path":P}, one required -> load a state
 //   GET  /api/debug/screenshot       -> current frame as image/png bytes
 //   GET  /api/debug/build-info       -> SCM rev/branch/app version/configuration
 //   GET  /api/debug/render-state     -> render-relevant config/state snapshot
 //   GET  /api/logs                   -> query {"tail":N=200} -> last N log lines
+//
+// frame-advance/savestate/loadstate bodies are parsed by `parseBody` below: a
+// non-JSON-object body (including a missing one) returns nil, which callers
+// turn into a 400. Other routes' bodies are parsed inline and predate this
+// convention.
 
 import Foundation
 
-/// Parses a request body as a JSON object, returning `[:]` on missing/invalid JSON.
-private func jsonBody(_ body: Data?) -> [String: Any] {
-  guard let body, let j = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else { return [:] }
-  return j
+/// The error message every `parseBody` caller returns (as a 400) when the
+/// request body is missing, empty, or not a JSON object.
+private let bodyMustBeJSONObjectError = "body must be a JSON object"
+
+/// Parses a request body as a JSON object, or nil for a missing, empty, or
+/// non-object body — callers should turn a nil into a 400 with
+/// `bodyMustBeJSONObjectError`.
+private func parseBody(_ body: Data?) -> [String: Any]? {
+  guard let body, !body.isEmpty,
+        let obj = try? JSONSerialization.jsonObject(with: body),
+        let dict = obj as? [String: Any] else {
+    return nil
+  }
+  return dict
+}
+
+/// Returns `value` as an `Int` only if it is a JSON number encoding a whole
+/// number. Rejects JSON booleans (Foundation bridges `true`/`false` to
+/// `NSNumber`, which would otherwise pass an `as? NSNumber` check) and
+/// non-integral numbers like `1.5`.
+private func asJSONInt(_ value: Any?) -> Int? {
+  guard let num = value as? NSNumber, CFGetTypeID(num) != CFBooleanGetTypeID() else { return nil }
+  guard num.doubleValue == num.doubleValue.rounded() else { return nil }
+  return num.intValue
 }
 
 final class DebugAPIRoutes {
@@ -180,11 +205,17 @@ final class DebugAPIRoutes {
 
     // GET /api/health — build/game/core-state/perf summary.
     server.addCustomHandler(forMethod: "GET", path: "/api/health") { _, _, _, _ in
-      let perf = DOLPerfBridge.snapshot() as? [String: Any] ?? [:]
+      let perf = DOLPerfBridge.snapshot() as [String: Any]
       let build = DOLDebugBridge.buildInfo()
+      // TVEmulationBridge.currentGameID() reads SConfig::GetGameID(), an
+      // unlocked std::string — only safe to touch on the main thread (see
+      // the same hop used by POST /api/settings/<key> below).
+      let gameID: String = Thread.isMainThread
+        ? TVEmulationBridge.currentGameID()
+        : DispatchQueue.main.sync { TVEmulationBridge.currentGameID() }
       return ["ok": true, "data": [
         "build_sha": build["scm_rev"] ?? "", "config": build["configuration"] ?? "",
-        "game_id": TVEmulationBridge.currentGameID(), "core_state": DOLDebugBridge.coreState(),
+        "game_id": gameID, "core_state": DOLDebugBridge.coreState(),
         "fps": perf["fps"] ?? 0, "vps": perf["vps"] ?? 0,
       ] as [String: Any]]
     }
@@ -201,9 +232,14 @@ final class DebugAPIRoutes {
                               : ["ok": false, "status": 409, "error": "core not running"]
     }
 
-    // POST /api/debug/frame-advance  body {"n":N}
+    // POST /api/debug/frame-advance  body {"n":N}, n required, 1...600
     server.addCustomHandler(forMethod: "POST", path: "/api/debug/frame-advance") { _, _, _, body in
-      let n = (jsonBody(body)["n"] as? NSNumber)?.intValue ?? 1
+      guard let dict = parseBody(body) else {
+        return ["ok": false, "status": 400, "error": bodyMustBeJSONObjectError]
+      }
+      guard let n = asJSONInt(dict["n"]), (1...600).contains(n) else {
+        return ["ok": false, "status": 400, "error": "n must be an integer 1…600"]
+      }
       guard DOLDebugBridge.coreState() == "paused" else {
         return ["ok": false, "status": 409, "error": "core must be paused (state=\(DOLDebugBridge.coreState()))"]
       }
@@ -217,19 +253,37 @@ final class DebugAPIRoutes {
       ["ok": true, "data": ["frame_count": DOLDebugBridge.frameCount()]]
     }
 
-    // POST /api/debug/savestate  body {"slot":N}
+    // POST /api/debug/savestate  body {"slot":N}, slot optional (defaults to 1) but must be an Int if present
     server.addCustomHandler(forMethod: "POST", path: "/api/debug/savestate") { _, _, _, body in
-      let slot = (jsonBody(body)["slot"] as? NSNumber)?.intValue ?? 1
+      guard let dict = parseBody(body) else {
+        return ["ok": false, "status": 400, "error": bodyMustBeJSONObjectError]
+      }
+      let slot: Int
+      if let rawSlot = dict["slot"] {
+        guard let parsedSlot = asJSONInt(rawSlot) else {
+          return ["ok": false, "status": 400, "error": "slot must be an integer"]
+        }
+        slot = parsedSlot
+      } else {
+        slot = 1
+      }
       return DOLDebugBridge.saveStateSlot(slot) ? ["ok": true, "data": ["slot": slot]]
                                                  : ["ok": false, "status": 409, "error": "core not running"]
     }
 
-    // POST /api/debug/loadstate  body {"slot":N} or {"path":P}
+    // POST /api/debug/loadstate  body {"slot":N} or {"path":P}; one of the two is required
     server.addCustomHandler(forMethod: "POST", path: "/api/debug/loadstate") { _, _, _, body in
-      let j = jsonBody(body)
+      guard let dict = parseBody(body) else {
+        return ["ok": false, "status": 400, "error": bodyMustBeJSONObjectError]
+      }
       let ok: Bool
-      if let p = j["path"] as? String { ok = DOLDebugBridge.loadStatePath(p) }
-      else { ok = DOLDebugBridge.loadStateSlot((j["slot"] as? NSNumber)?.intValue ?? 1) }
+      if let path = dict["path"] as? String {
+        ok = DOLDebugBridge.loadStatePath(path)
+      } else if let slot = asJSONInt(dict["slot"]) {
+        ok = DOLDebugBridge.loadStateSlot(slot)
+      } else {
+        return ["ok": false, "status": 400, "error": "body must contain an integer 'slot' or a string 'path'"]
+      }
       return ok ? ["ok": true, "data": ["state": DOLDebugBridge.coreState()]]
                 : ["ok": false, "status": 409, "error": "core not running or state missing"]
     }
@@ -252,9 +306,14 @@ final class DebugAPIRoutes {
       ["ok": true, "data": DOLDebugBridge.renderState()]
     }
 
-    // GET /api/logs  query {"tail":N=200}
+    // GET /api/logs  query tail=N, defaults to 200 when absent; N must be a non-negative integer
     server.addCustomHandler(forMethod: "GET", path: "/api/logs") { _, _, query, _ in
-      let n = Int(query?["tail"] ?? "") ?? 200
+      guard let raw = query?["tail"] else {
+        return ["ok": true, "data": ["lines": DOLDebugBridge.logTail(200)]]
+      }
+      guard let n = Int(raw), n >= 0 else {
+        return ["ok": false, "status": 400, "error": "tail must be a non-negative integer"]
+      }
       return ["ok": true, "data": ["lines": DOLDebugBridge.logTail(n)]]
     }
 
