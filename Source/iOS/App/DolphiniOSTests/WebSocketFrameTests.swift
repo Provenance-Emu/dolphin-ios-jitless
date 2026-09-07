@@ -27,4 +27,23 @@ final class WebSocketFrameTests: XCTestCase {
     let b = [UInt8](f.encode())
     XCTAssertEqual(Array(b[0..<4]), [0x81, 126, 0x01, 0x2C])
   }
+  func testDecodeRejectsLengthWithHighBitSet() {
+    // 64-bit extended length with bit 63 set, plus 4 mask bytes.
+    let bytes: [UInt8] = [0x81, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00]
+    XCTAssertNil(WebSocketFrame.decode(Data(bytes)))
+  }
+  func testDecodeRejectsLengthLargerThanBuffer() {
+    // 64-bit extended length of 4096, with only 10 more bytes following the header.
+    let bytes: [UInt8] = [0x81, 0x7F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
+                           0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+    XCTAssertNil(WebSocketFrame.decode(Data(bytes)))
+  }
+  func testEncodeDecodeRoundTrip64Bit() {
+    let payload = Data(repeating: 0x42, count: 70_000)
+    let f = WebSocketFrame(fin: true, opcode: .text, payload: payload)
+    let encoded = f.encode()
+    let r = WebSocketFrame.decode(encoded)
+    XCTAssertEqual(r?.frame.payload, payload)
+    XCTAssertEqual(r?.consumed, encoded.count)
+  }
 }

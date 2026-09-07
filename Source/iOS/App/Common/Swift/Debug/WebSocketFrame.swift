@@ -30,7 +30,21 @@ struct WebSocketFrame {
     var len = Int(b[1] & 0x7F)
     var i = 2
     if len == 126 { guard b.count >= 4 else { return nil }; len = Int(b[2]) << 8 | Int(b[3]); i = 4 }
-    else if len == 127 { guard b.count >= 10 else { return nil }; len = 0; for k in 2..<10 { len = len << 8 | Int(b[k]) }; i = 10 }
+    else if len == 127 {
+      guard b.count >= 10 else { return nil }
+      // Accumulate as UInt64 first: a signed Int can't safely hold an
+      // arbitrary 64-bit big-endian length (bit 63 set becomes negative,
+      // and a value near Int.max can overflow the later `i + len` add).
+      // Reject anything that doesn't fit in Int or in the remaining buffer
+      // instead of trapping.
+      var extLen: UInt64 = 0
+      for k in 2..<10 { extLen = (extLen << 8) | UInt64(b[k]) }
+      guard extLen <= UInt64(Int.max) else { return nil }
+      let remaining = UInt64(b.count - 10)
+      guard extLen <= remaining else { return nil }
+      len = Int(extLen)
+      i = 10
+    }
     var key: [UInt8] = []
     if masked { guard b.count >= i + 4 else { return nil }; key = Array(b[i..<i+4]); i += 4 }
     guard b.count >= i + len else { return nil }
