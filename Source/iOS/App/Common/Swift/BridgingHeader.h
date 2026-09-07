@@ -35,6 +35,7 @@
 #import "TVLibraryBridge.h"
 #import "TVEmulationBridge.h"
 #import "DOLConfigBridge.h"
+#import "DOLDebugBridge.h"
 #import "DOLPerfBridge.h"
 #import "DOLSettingsKeyBridge.h"
 #import "DSUServerBridge.h"
