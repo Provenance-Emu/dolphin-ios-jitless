@@ -262,7 +262,10 @@ final class NativeWebServer: @unchecked Sendable {
 
         if request.headers["upgrade"]?.lowercased() == "websocket",
            let key = request.headers["sec-websocket-key"] {
-          guard let handler = self.webSocketHandler else {
+          self.lock.lock()
+          let webSocketHandler = self.webSocketHandler
+          self.lock.unlock()
+          guard let handler = webSocketHandler else {
             self.sendResponse(on: connection, status: 404, statusText: "Not Found", body: "Not Found")
             return
           }
