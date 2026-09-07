@@ -1,6 +1,12 @@
+import json
 from pathlib import Path
+
+import pytest
+
 from icube_debug.scenario import Scenario, run_on_device, compare_with_upstream, bisect_settings
 from icube_debug.config import Config
+from icube_debug.device import DeviceError
+from icube_debug.oracle import OracleError
 
 class FakeDevice:
     def __init__(self, png, settings=None):
@@ -49,6 +55,24 @@ def test_run_on_device_skips_resolution_pin_when_key_absent():
     assert not any(path == "/api/settings/gfxEfbScale" for path, _ in d.calls)
     assert warnings and "gfxEfbScale" in warnings[0]
 
+def test_run_on_device_restores_on_exception():
+    # Controller ruling (Task 13 fix round 1): run_on_device must not leave
+    # the device with the resolution pin applied nor the core paused if
+    # anything in the middle raises -- both the gfxEfbScale restore and the
+    # resume POST must still happen, and the original exception must
+    # propagate unchanged.
+    class RaisingDevice(FakeDevice):
+        def post(self, path, body=None):
+            if path == "/api/debug/frame-advance":
+                raise DeviceError("boom")
+            return super().post(path, body)
+
+    d = RaisingDevice(solid("red"), settings={"gfxEfbScale": {"value": 3}})
+    with pytest.raises(DeviceError):
+        run_on_device(d, Scenario("SMNE01", 30), boot=lambda g: None)
+    assert ("/api/settings/gfxEfbScale", {"value": 3}) in d.calls
+    assert ("/api/debug/resume", None) in d.calls
+
 def test_compare_pass_and_fail(tmp_path, monkeypatch):
     cfg = Config(dolphin_app=Path("/x"), cpu_core=5, games={"SMNE01": Path("/x.rvz")}, home=tmp_path)
     monkeypatch.setattr("icube_debug.scenario.dump_frames", lambda *a, **k: _write(tmp_path / "up.png", solid("red")))
@@ -82,10 +106,31 @@ def test_compare_with_upstream_oracle_overrides_not_translated(tmp_path, monkeyp
     compare_with_upstream(FakeDevice(solid("red")), cfg, sc_with_oracle_overrides, boot=lambda g: None)
     assert captured["overrides"] == {"Dolphin.Core.CPUCore": "1"}
 
+def test_compare_with_upstream_records_oracle_error(tmp_path, monkeypatch):
+    # Controller ruling (Task 13 fix round 1): if dump_frames raises
+    # OracleError, compare_with_upstream must still record a run (verdict
+    # "error", the device screenshot it already captured, score None) before
+    # re-raising the original exception.
+    cfg = Config(dolphin_app=Path("/x"), cpu_core=5, games={"SMNE01": Path("/x.rvz")}, home=tmp_path)
+
+    def raising_dump_frames(*a, **k):
+        raise OracleError("boom")
+
+    monkeypatch.setattr("icube_debug.scenario.dump_frames", raising_dump_frames)
+    with pytest.raises(OracleError):
+        compare_with_upstream(FakeDevice(solid("red")), cfg, Scenario("SMNE01", 30), boot=lambda g: None)
+    lines = (tmp_path / "runs.jsonl").read_text().strip().splitlines()
+    assert len(lines) == 1
+    rec = json.loads(lines[0])
+    assert rec["verdict"] == "error"
+    assert rec["error"] == "boom"
+    assert rec["score"] is None
+    assert Path(rec["device_png"]).exists()
+
 def test_bisect_settings_flips_booleans_and_restores():
     d = FakeDevice(solid("red"), settings={"gfxHackFastMath": {"value": True}, "other": {"value": 5}})
     results = bisect_settings(
-        d, None, Scenario("SMNE01", 10), ["gfxHackFastMath", "other"],
+        d, Scenario("SMNE01", 10), ["gfxHackFastMath", "other"],
         boot=lambda g: None, upstream_png=solid("red"),
     )
     fast_math = next(r for r in results if r["key"] == "gfxHackFastMath")

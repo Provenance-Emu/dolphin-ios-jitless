@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Callable
 from .config import Config
 from .imagediff import compare
-from .oracle import dump_frames
+from .oracle import dump_frames, OracleError
 
 # Device settings key (DOLSettingsKeyBridge camelCase name) used to pin/restore
 # the device's internal rendering resolution around a scenario run. This is a
@@ -75,17 +75,23 @@ def run_on_device(
     warnings: list[str] | None = None,
 ) -> bytes:
     had_key, prev_value = _pin_resolution(dev, warnings)
-    for k, v in sc.settings_overrides.items():
-        dev.post(f"/api/settings/{k}", {"value": v})
-    if sc.start == "boot":
-        boot(sc.game_id)
-    else:
-        raise NotImplementedError("state-based scenarios need the STATE_VERSION shim (spec follow-up)")
-    dev.post("/api/debug/pause")
-    dev.post("/api/debug/frame-advance", {"n": sc.frames})
-    png = dev.get_bytes("/api/debug/screenshot")
-    _restore_resolution(dev, had_key, prev_value)
-    return png
+    try:
+        for k, v in sc.settings_overrides.items():
+            dev.post(f"/api/settings/{k}", {"value": v})
+        if sc.start == "boot":
+            boot(sc.game_id)
+        else:
+            raise NotImplementedError("state-based scenarios need the STATE_VERSION shim (spec follow-up)")
+        dev.post("/api/debug/pause")
+        dev.post("/api/debug/frame-advance", {"n": sc.frames})
+        return dev.get_bytes("/api/debug/screenshot")
+    finally:
+        # Controller ruling (Task 13 fix round 1): run_on_device must not
+        # leave the device mid-scenario on any exception -- restore the
+        # resolution pin (only if it was actually applied) and always
+        # resume the core, so a raising step never leaves it paused.
+        _restore_resolution(dev, had_key, prev_value)
+        dev.post("/api/debug/resume")
 
 
 def append_run(cfg: Config, record: dict) -> None:
@@ -109,7 +115,16 @@ def compare_with_upstream(dev, cfg: Config, sc: Scenario, boot, threshold=0.97, 
     # translated into oracle -C keys. Only an explicit oracle_overrides dict
     # on the scenario is forwarded to the oracle; otherwise pass None.
     oracle_overrides = sc.oracle_overrides or None
-    upstream_path = dump_frames(cfg, sc.game_id, sc.frames, overrides=oracle_overrides)
+    try:
+        upstream_path = dump_frames(cfg, sc.game_id, sc.frames, overrides=oracle_overrides)
+    except OracleError as e:
+        # Controller ruling (Task 13 fix round 1): a failed oracle dump must
+        # still leave a run record behind (the device screenshot was already
+        # captured successfully) before the exception propagates.
+        rec = {"ts": ts, "scenario": asdict(sc), "verdict": "error", "error": str(e),
+               "device_png": str(device_png), "score": None, "warnings": warnings}
+        append_run(cfg, rec)
+        raise
     upstream_png = goldens / f"{ts}-{sc.game_id}-upstream.png"; upstream_png.write_bytes(Path(upstream_path).read_bytes())
     r = compare(a, upstream_png.read_bytes())
     diff_png = diffs / f"{ts}-{sc.game_id}-diff.png"; diff_png.write_bytes(r.diff_png)
@@ -121,18 +136,24 @@ def compare_with_upstream(dev, cfg: Config, sc: Scenario, boot, threshold=0.97, 
     return rec
 
 
-def bisect_settings(dev, cfg: Config, sc: Scenario, keys: list[str], boot, upstream_png: bytes) -> list[dict]:
+def bisect_settings(dev, sc: Scenario, keys: list[str], boot, upstream_png: bytes) -> list[dict]:
+    # Note (Task 13 fix round 1): the brief's original signature carried an
+    # unused `cfg: Config` parameter. Nothing in this package or the rest of
+    # the tree references it (Task 14's server.py does not exist yet), so it
+    # was dropped here -- follow up in Task 14 to pass `dev, sc, keys, boot,
+    # upstream_png` (no `cfg`) when wiring this into server.py.
     baseline = {k: v["value"] for k, v in dev.get("/api/settings").items() if k in keys}
     results = []
     for key in keys:
         cur = baseline.get(key)
         flipped = (not cur) if isinstance(cur, bool) else cur
         if flipped == cur:
-            results.append({"key": key, "from": cur, "to": cur, "score": None, "note": "non-boolean, skipped"}); continue
+            results.append({"key": key, "from": cur, "to": cur, "score": None, "note": "non-boolean, skipped", "warnings": []}); continue
         dev.post(f"/api/settings/{key}", {"value": flipped})
+        warnings: list[str] = []
         try:
-            png = run_on_device(dev, sc, boot)
-            results.append({"key": key, "from": cur, "to": flipped, "score": compare(png, upstream_png).score})
+            png = run_on_device(dev, sc, boot, warnings=warnings)
+            results.append({"key": key, "from": cur, "to": flipped, "score": compare(png, upstream_png).score, "warnings": warnings})
         finally:
             dev.post(f"/api/settings/{key}", {"value": cur})
     return results
