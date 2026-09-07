@@ -9,7 +9,11 @@
 // WebSocket connection. Producers (config-change/log/core-state handlers,
 // a 1Hz perf-sample timer) may fire from any thread; `publish` snapshots the
 // socket list under `lock` and never invokes `WebSocketConnection.send`
-// while holding it.
+// while holding it. `lastSettings` is likewise only ever read/written while
+// holding `lock`, since the config-changed handler can fire concurrently
+// from any thread. A newly `attach`-ed socket gets its own initial
+// `core.state` snapshot, not a broadcast. `stopProducers()` tears down the
+// timer and sockets for `DebugServerManager.stop()`.
 
 import Foundation
 
@@ -24,9 +28,21 @@ final class DebugEventBus: @unchecked Sendable {
   static func encode(kind: String, fields: [String: Any]) -> String {
     var obj = fields
     obj["kind"] = kind
-    obj["t"] = Date().timeIntervalSince1970 * 1000
-    let data = (try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys])) ?? Data("{}".utf8)
-    return String(decoding: data, as: UTF8.self)
+    let t = Date().timeIntervalSince1970 * 1000
+    obj["t"] = t
+    // `isValidJSONObject` must be checked BEFORE calling `data(withJSONObject:)`:
+    // a non-serializable value (e.g. Double.nan) makes that call raise an
+    // uncaught NSInvalidArgumentException rather than throw a catchable Swift
+    // error, so `try?` alone does not protect against it.
+    if JSONSerialization.isValidJSONObject(obj),
+       let data = try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys]) {
+      return String(decoding: data, as: UTF8.self)
+    }
+    // `fields` failed to serialize (e.g. a Double.nan value) — fall back to
+    // just the two fields every consumer relies on rather than an empty "{}".
+    let fallback: [String: Any] = ["kind": kind, "t": t]
+    let fallbackData = (try? JSONSerialization.data(withJSONObject: fallback, options: [.sortedKeys])) ?? Data("{}".utf8)
+    return String(decoding: fallbackData, as: UTF8.self)
   }
 
   static func settingsDiff(old: [String: Any], new: [String: Any]) -> [(key: String, old: Any?, new: Any?)] {
@@ -52,18 +68,43 @@ final class DebugEventBus: @unchecked Sendable {
       guard let self, let socket else { return }
       self.lock.lock(); self.sockets[ObjectIdentifier(socket)] = nil; self.lock.unlock()
     }
-    publish("core.state", ["state": DOLDebugBridge.coreState()])
+    // Only the newly attached socket gets the initial snapshot — not a
+    // broadcast to every socket already attached.
+    socket.send(text: Self.encode(kind: "core.state", fields: ["state": DOLDebugBridge.coreState()]))
+  }
+
+  /// Cancels the perf timer, closes and detaches every attached socket, and
+  /// clears `producersStarted` so a later `start()` can re-arm the timer. The
+  /// `DOLDebugBridge` handlers are left registered — they're install-once by
+  /// design and harmlessly no-op via `publish` finding no sockets.
+  func stopProducers() {
+    lock.lock()
+    perfTimer?.cancel()
+    perfTimer = nil
+    let targets = Array(sockets.values)
+    sockets.removeAll()
+    producersStarted = false
+    lock.unlock()
+    targets.forEach { $0.close() }
   }
 
   func startProducers() {
     guard !producersStarted else { return }
     producersStarted = true
+    lock.lock()
     lastSettings = DOLSettingsKeyBridge.snapshotAll() as? [String: Any] ?? [:]
+    lock.unlock()
     DOLDebugBridge.setConfigChangedHandler { [weak self] in
       guard let self else { return }
       let now = DOLSettingsKeyBridge.snapshotAll() as? [String: Any] ?? [:]
-      let diff = Self.settingsDiff(old: self.lastSettings, new: now)
+      // Guard the read-then-write of `lastSettings` with `lock` since this
+      // handler may fire from any thread and concurrently; compute the diff
+      // and publish only after releasing the lock.
+      self.lock.lock()
+      let old = self.lastSettings
       self.lastSettings = now
+      self.lock.unlock()
+      let diff = Self.settingsDiff(old: old, new: now)
       for d in diff {
         self.publish("settings.changed", ["key": d.key, "old": d.old ?? NSNull(), "new": d.new ?? NSNull()])
       }

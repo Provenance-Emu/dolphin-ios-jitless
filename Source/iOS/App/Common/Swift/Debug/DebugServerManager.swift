@@ -79,6 +79,7 @@ final class DebugServerManager: NSObject {
 
   @objc func stop() {
     guard isRunning else { return }
+    DebugEventBus.shared.stopProducers()
     server.stop()
     isRunning = false
     serverURL = ""
