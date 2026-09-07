@@ -77,6 +77,7 @@ private func asJSONInt(_ value: Any?) -> Int? {
 
 final class DebugAPIRoutes {
   private var registered = false
+  private let snapshots = SettingsSnapshots(directory: SettingsSnapshots.defaultDirectory)
 
   func registerRoutes(on server: NativeWebServer) {
     guard !registered else { return }
@@ -92,6 +93,70 @@ final class DebugAPIRoutes {
       // snapshotAll reads Config (internally synchronized) — safe off-main.
       let all = DOLSettingsKeyBridge.snapshotAll()
       return ["ok": true, "data": all]
+    }
+
+    // GET /api/settings/all — same data as GET /api/settings, but with per-layer
+    // (Base/PerGame/CurrentRun) breakdown instead of just the resolved value.
+    server.addCustomHandler(forMethod: "GET", path: "/api/settings/all") { _, _, _, _ in
+      ["ok": true, "data": DOLSettingsKeyBridge.snapshotAllLayers()]
+    }
+
+    // GET /api/settings/pergame — just the PerGame (Local GameINI) layer's overrides,
+    // one entry per key that actually HAS a per-game override (others are omitted).
+    server.addCustomHandler(forMethod: "GET", path: "/api/settings/pergame") { _, _, _, _ in
+      let all = DOLSettingsKeyBridge.snapshotAllLayers()
+      let pergame = all.compactMapValues { ($0["layers"] as? [String: Any])?["PerGame"] }
+      return ["ok": true, "data": pergame]
+    }
+
+    // POST /api/settings/reset  body {"keys":[...]}, optional — a missing/empty body or
+    // empty "keys" array resets ALL known keys. Registered before the POST
+    // /api/settings/.* regex below so it isn't shadowed by it (routing is first-match).
+    server.addCustomHandler(forMethod: "POST", path: "/api/settings/reset") { _, _, _, body in
+      guard let dict = parseOptionalBody(body) else {
+        return ["ok": false, "status": 400, "error": bodyMustBeJSONObjectError]
+      }
+      let keys = dict["keys"] as? [String] ?? []
+      let ok = DispatchQueue.main.sync { DOLSettingsKeyBridge.resetKeys(keys) }
+      return ok ? ["ok": true, "data": ["reset": keys.isEmpty ? "all" : keys] as [String: Any]]
+                : ["ok": false, "status": 404, "error": "unknown key in list"]
+    }
+
+    // GET /api/settings/snapshots — list saved snapshots (name/taken_at/game_id only).
+    server.addCustomHandler(forMethod: "GET", path: "/api/settings/snapshots") { [snapshots] _, _, _, _ in
+      ["ok": true, "data": snapshots.list()]
+    }
+
+    // POST /api/settings/snapshots  body {"name": "..."} — snapshot every known key's
+    // current per-layer state under `name`. Registered before POST /api/settings/.* so
+    // it isn't shadowed by it.
+    server.addCustomHandler(forMethod: "POST", path: "/api/settings/snapshots") { [snapshots] _, _, _, body in
+      guard let dict = parseBody(body) else {
+        return ["ok": false, "status": 400, "error": bodyMustBeJSONObjectError]
+      }
+      guard let name = dict["name"] as? String else {
+        return ["ok": false, "status": 400, "error": "missing name"]
+      }
+      // TVEmulationBridge.currentGameID() reads an unlocked std::string — main-thread only
+      // (see the same hop in GET /api/health below).
+      let gameID: String = Thread.isMainThread
+        ? TVEmulationBridge.currentGameID()
+        : DispatchQueue.main.sync { TVEmulationBridge.currentGameID() }
+      do {
+        try snapshots.save(name: name, snapshot: DOLSettingsKeyBridge.snapshotAllLayers(), gameId: gameID)
+        return ["ok": true, "data": ["name": SettingsSnapshots.sanitise(name)]]
+      } catch {
+        return ["ok": false, "status": 500, "error": "\(error)"]
+      }
+    }
+
+    // GET /api/settings/snapshots/<A>/diff/<B> — diff two saved snapshots by name.
+    server.addCustomHandler(forMethod: "GET", pathRegex: "/api/settings/snapshots/[^/]+/diff/[^/]+") { [snapshots] _, path, _, _ in
+      let parts = path.split(separator: "/").map(String.init)  // api settings snapshots A diff B
+      guard parts.count == 6, let a = snapshots.load(name: parts[3]), let b = snapshots.load(name: parts[5]) else {
+        return ["ok": false, "status": 404, "error": "snapshot not found"]
+      }
+      return ["ok": true, "data": SettingsSnapshots.diff(a, b)]
     }
 
     // POST /api/settings/<key>  body {"value": ...}
