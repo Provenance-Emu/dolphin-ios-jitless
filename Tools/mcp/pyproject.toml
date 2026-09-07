@@ -10,5 +10,8 @@ dev = ["pytest>=8", "respx>=0.21", "pytest-asyncio>=0.24"]
 [project.scripts]
 icube-debug-mcp = "icube_debug.server:main"
 
+[tool.uv]
+package = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

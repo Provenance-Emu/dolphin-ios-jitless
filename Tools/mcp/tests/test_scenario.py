@@ -34,6 +34,15 @@ def test_run_on_device_pauses_advances_and_captures():
     assert png == d.png
     assert ("/api/debug/pause", None) in d.calls and ("/api/debug/frame-advance", {"n": 30}) in d.calls
 
+def test_run_on_device_chunks_frame_advance_over_600():
+    # POST /api/debug/frame-advance caps n at 600 per call (DebugAPIRoutes.swift).
+    # A scenario asking for more frames than that must be split into multiple
+    # posts of at most 600 frames each.
+    d = FakeDevice(solid("red"))
+    run_on_device(d, Scenario("SMNE01", 900), boot=lambda g: None)
+    advance_calls = [body for path, body in d.calls if path == "/api/debug/frame-advance"]
+    assert advance_calls == [{"n": 600}, {"n": 300}]
+
 def test_run_on_device_pins_and_restores_resolution():
     # Controller ruling (Task 13 review): run_on_device must pin the device's
     # internal resolution (gfxEfbScale, a DEVICE key -- not an oracle -C key)
@@ -164,5 +173,36 @@ def test_bisect_settings_flips_booleans_and_restores():
     other = next(r for r in results if r["key"] == "other")
     assert other["note"] == "non-boolean, skipped"
     assert ("/api/settings/gfxHackFastMath", {"value": True}) in d.calls
+
+def test_bisect_settings_reports_unknown_key():
+    # A key absent from GET /api/settings is a distinct case from a
+    # non-boolean value -- it must be flagged "unknown key", not silently
+    # skipped as if it were a boolean that happened not to flip.
+    d = FakeDevice(solid("red"), settings={"gfxHackFastMath": {"value": True}})
+    results = bisect_settings(
+        d, Scenario("SMNE01", 10), ["gfxHackFastMath", "doesNotExist"],
+        boot=lambda g: None, upstream_png=solid("red"),
+    )
+    missing = next(r for r in results if r["key"] == "doesNotExist")
+    assert missing == {"key": "doesNotExist", "note": "unknown key", "score": None}
+
+def test_bisect_settings_records_restore_failure_as_warning():
+    # Mirrors run_on_device's cleanup style: if the restore POST after a
+    # flip fails, that must show up as a warning on the key's result rather
+    # than raising and abandoning the rest of the sweep.
+    class RestoreFailsDevice(FakeDevice):
+        def post(self, path, body=None):
+            if path == "/api/settings/gfxHackFastMath" and body == {"value": True}:
+                raise DeviceError("restore boom")
+            return super().post(path, body)
+
+    d = RestoreFailsDevice(solid("red"), settings={"gfxHackFastMath": {"value": True}})
+    results = bisect_settings(
+        d, Scenario("SMNE01", 10), ["gfxHackFastMath"],
+        boot=lambda g: None, upstream_png=solid("red"),
+    )
+    fast_math = results[0]
+    assert fast_math["key"] == "gfxHackFastMath"
+    assert any("restore" in w.lower() for w in fast_math["warnings"])
 
 def _write(p, b): p.write_bytes(b); return p

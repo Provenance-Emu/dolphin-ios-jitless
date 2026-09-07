@@ -27,6 +27,11 @@ from .oracle import dump_frames, OracleError
 # different namespace than the oracle's `Graphics.Settings.*` -C keys.
 _EFB_SCALE_KEY = "gfxEfbScale"
 
+# POST /api/debug/frame-advance caps `n` at 600 per call (DebugAPIRoutes.swift:
+# `guard let n = asJSONInt(dict["n"]), (1...600).contains(n)`). run_on_device
+# splits any larger request into multiple posts of at most this many frames.
+_MAX_FRAME_ADVANCE_PER_CALL = 600
+
 
 @dataclass
 class Scenario:
@@ -83,7 +88,11 @@ def run_on_device(
         else:
             raise NotImplementedError("state-based scenarios need the STATE_VERSION shim (spec follow-up)")
         dev.post("/api/debug/pause")
-        dev.post("/api/debug/frame-advance", {"n": sc.frames})
+        remaining = sc.frames
+        while remaining:
+            n = min(_MAX_FRAME_ADVANCE_PER_CALL, remaining)
+            dev.post("/api/debug/frame-advance", {"n": n})
+            remaining -= n
         return dev.get_bytes("/api/debug/screenshot")
     finally:
         # Controller ruling (Task 13 fix round 2): cleanup steps are
@@ -150,10 +159,14 @@ def bisect_settings(dev, sc: Scenario, keys: list[str], boot, upstream_png: byte
     # the tree references it (Task 14's server.py does not exist yet), so it
     # was dropped here -- follow up in Task 14 to pass `dev, sc, keys, boot,
     # upstream_png` (no `cfg`) when wiring this into server.py.
-    baseline = {k: v["value"] for k, v in dev.get("/api/settings").items() if k in keys}
+    all_settings = dev.get("/api/settings")
+    baseline = {k: v["value"] for k, v in all_settings.items() if k in keys}
     results = []
     for key in keys:
-        cur = baseline.get(key)
+        if key not in baseline:
+            results.append({"key": key, "note": "unknown key", "score": None})
+            continue
+        cur = baseline[key]
         flipped = (not cur) if isinstance(cur, bool) else cur
         if flipped == cur:
             results.append({"key": key, "from": cur, "to": cur, "score": None, "note": "non-boolean, skipped", "warnings": []}); continue
@@ -163,5 +176,12 @@ def bisect_settings(dev, sc: Scenario, keys: list[str], boot, upstream_png: byte
             png = run_on_device(dev, sc, boot, warnings=warnings)
             results.append({"key": key, "from": cur, "to": flipped, "score": compare(png, upstream_png).score, "warnings": warnings})
         finally:
-            dev.post(f"/api/settings/{key}", {"value": cur})
+            # Mirror run_on_device's cleanup style: the restore POST is
+            # best-effort -- if it fails, record a warning on this key's
+            # result rather than letting the restore failure mask whatever
+            # happened above (or propagate and skip remaining keys).
+            try:
+                dev.post(f"/api/settings/{key}", {"value": cur})
+            except Exception as e:
+                warnings.append(f"restore {key} failed: {e}")
     return results

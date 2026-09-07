@@ -1,3 +1,5 @@
+import pytest
+
 import icube_debug.server as srv
 
 TOOL_NAMES = [
@@ -21,6 +23,27 @@ def test_tools_route_to_device(monkeypatch):
     assert srv.frame_advance(n=7)["body"] == {"n": 7}
     assert srv.settings_set(key="gfxHackFastMath", value=False)["body"] == {"value": False}
     assert srv.logs(tail=5)["tail"] == 5
+
+
+def test_settings_reset_requires_keys_or_all(monkeypatch):
+    # settings_reset must not silently no-op (or worse, reset everything --
+    # the device route treats an empty keys list as "reset all") when called
+    # with neither keys nor all=True.
+    monkeypatch.setattr(srv, "_device", lambda base: FakeDevice())
+    with pytest.raises(ValueError):
+        srv.settings_reset()
+    with pytest.raises(ValueError):
+        srv.settings_reset(keys=[])
+
+
+def test_settings_reset_with_keys(monkeypatch):
+    monkeypatch.setattr(srv, "_device", lambda base: FakeDevice())
+    assert srv.settings_reset(keys=["gfxHackFastMath"])["body"] == {"keys": ["gfxHackFastMath"]}
+
+
+def test_settings_reset_all(monkeypatch):
+    monkeypatch.setattr(srv, "_device", lambda base: FakeDevice())
+    assert srv.settings_reset(all=True)["body"] == {"keys": []}
 
 
 async def test_all_tools_registered():
