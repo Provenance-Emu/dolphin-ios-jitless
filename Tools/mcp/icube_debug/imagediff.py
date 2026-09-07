@@ -16,7 +16,7 @@ from skimage.metrics import structural_similarity
 @dataclass
 class DiffResult:
     score: float
-    tile_scores: list[list[float]]
+    tile_scores: list[list[float | None]]
     diff_png: bytes
     size: tuple[int, int]
 
@@ -43,12 +43,12 @@ def compare(a_png: bytes, b_png: bytes, tiles: int = 8) -> DiffResult:
             min_dim = min(sa.shape)
             win = min(7, min_dim if min_dim % 2 == 1 else min_dim - 1)
             if win < 3:
-                s = float("nan")
+                s = None
             else:
                 s = float(structural_similarity(sa, sb, data_range=255.0, win_size=win))
-            row.append(round(s, 4) if not math.isnan(s) else s)
-            # Skip heatmap coloring for NaN tiles
-            if not math.isnan(s):
+            row.append(round(s, 4) if s is not None else None)
+            # Skip heatmap coloring for None tiles
+            if s is not None:
                 red = int(255 * max(0.0, 1.0 - s))
                 for y in range(ty*th, (ty+1)*th):
                     for x in range(tx*tw, (tx+1)*tw):

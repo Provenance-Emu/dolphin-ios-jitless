@@ -61,13 +61,38 @@ def test_independent_rasterizations_at_different_sizes_score_low():
 
 
 def test_small_tiles_do_not_report_perfect():
-    """Small tiles should not silently report 1.0; NaN tiles are excluded."""
+    """Small tiles should not silently report 1.0; None tiles are excluded."""
     # With 32×32 tiles on a 256×192 image, tiles are 8×6 pixels.
     # After grayscale conversion, smaller tiles should not all score 1.0.
     r = compare(png(scene), png(scene_broken), tiles=32)
     assert r.size == (256, 192)
 
-    # Flatten tile scores and check for at least one non-NaN score < 0.97
-    flat_scores = [s for row in r.tile_scores for s in row if not math.isnan(s)]
-    assert len(flat_scores) > 0, "No valid (non-NaN) tile scores found"
+    # Flatten tile scores and check for at least one non-None score < 0.97
+    flat_scores = [s for row in r.tile_scores for s in row if s is not None]
+    assert len(flat_scores) > 0, "No valid (non-None) tile scores found"
     assert any(s < 0.97 for s in flat_scores), "Expected at least one tile score < 0.97, but all are >= 0.97"
+
+
+def test_degenerate_tiles_are_json_null():
+    """Degenerate tiles (win < 3) must score None (JSON null), not NaN.
+
+    256×192 with tiles=128 creates 2×1-pixel tiles (win=1 < 3), which should
+    all be None. Verify: at least one None, no NaN anywhere, JSON-serializable.
+    """
+    import json
+
+    r = compare(png(scene), png(scene), tiles=128)
+    assert r.size == (256, 192)
+
+    # Flatten scores
+    flat_scores = [s for row in r.tile_scores for s in row]
+
+    # At least one None
+    assert any(s is None for s in flat_scores), "Expected at least one None tile"
+
+    # No NaN anywhere
+    assert not any(isinstance(s, float) and math.isnan(s) for s in flat_scores), "Found NaN in tile scores"
+
+    # Must be JSON-serializable with allow_nan=False
+    json_str = json.dumps(r.tile_scores, allow_nan=False)
+    assert json_str is not None
