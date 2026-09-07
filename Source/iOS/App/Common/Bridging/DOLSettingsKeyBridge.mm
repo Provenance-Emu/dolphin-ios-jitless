@@ -35,8 +35,10 @@ typedef id _Nonnull (^DOLGetterBlock)(void);
 typedef void (^DOLSetterBlock)(id value);
 // Returns nil when `layer` has no explicit entry for this key.
 typedef id _Nullable (^DOLLayerGetterBlock)(Config::LayerType layer);
-// Deletes this key from Base / PerGame(LocalGame) / CurrentRun.
-typedef void (^DOLResetBlock)(void);
+// Deletes this key from Base / PerGame(LocalGame) / CurrentRun. Returns YES if any of those
+// layers actually had an explicit entry for the key (i.e. something was deleted). Does NOT
+// fire Config::OnConfigChanged() itself — resetKeys: fires it once for the whole batch.
+typedef BOOL (^DOLResetBlock)(void);
 
 // One entry per settable key.
 @interface DOLSettingEntry : NSObject
@@ -115,20 +117,22 @@ static DOLLayerGetterBlock MakeLayerGetter(const Config::Info<T>& info) {
 }
 
 // Deletes `location` from Base, PerGame (Config::LayerType::LocalGame), and CurrentRun,
-// firing Config::OnConfigChanged() once iff any layer actually had the key. Location-based
-// (not templated on T) because Layer::DeleteKey only needs the location, not the type —
-// this lets one block implementation serve every key regardless of its Info<T>.
+// returning YES iff any layer actually had the key. Location-based (not templated on T)
+// because Layer::DeleteKey only needs the location, not the type — this lets one block
+// implementation serve every key regardless of its Info<T>. Does NOT fire
+// Config::OnConfigChanged() — callers resetting multiple keys (resetKeys:) must fire it once
+// for the whole batch after all deletions, not once per key.
 static DOLResetBlock MakeResetBlock(const Config::Location& location) {
-  return ^{
+  return ^BOOL{
     static constexpr Config::LayerType kResetLayers[] = {
       Config::LayerType::Base, Config::LayerType::LocalGame, Config::LayerType::CurrentRun,
     };
-    bool changed = false;
+    BOOL changed = NO;
     for (Config::LayerType lt : kResetLayers) {
       std::shared_ptr<Config::Layer> layerPtr = Config::GetLayer(lt);
-      if (layerPtr && layerPtr->DeleteKey(location)) changed = true;
+      if (layerPtr && layerPtr->DeleteKey(location)) changed = YES;
     }
-    if (changed) Config::OnConfigChanged();
+    return changed;
   };
 }
 
@@ -374,20 +378,25 @@ static NSString* TypeName(DOLSettingType type) {
     [NSMutableDictionary dictionaryWithCapacity:table.count];
   [table enumerateKeysAndObjectsUsingBlock:^(NSString* key, DOLSettingEntry* e, BOOL* stop) {
     id baseValue = e.layerGetter(Config::LayerType::Base);
+    id globalGameValue = e.layerGetter(Config::LayerType::GlobalGame);
     id perGameValue = e.layerGetter(Config::LayerType::LocalGame);
     id currentRunValue = e.layerGetter(Config::LayerType::CurrentRun);
 
-    NSMutableDictionary<NSString*, id>* layers = [NSMutableDictionary dictionaryWithCapacity:3];
+    NSMutableDictionary<NSString*, id>* layers = [NSMutableDictionary dictionaryWithCapacity:4];
     if (baseValue != nil) layers[@"Base"] = baseValue;
+    if (globalGameValue != nil) layers[@"GlobalGame"] = globalGameValue;
     if (perGameValue != nil) layers[@"PerGame"] = perGameValue;
     if (currentRunValue != nil) layers[@"CurrentRun"] = currentRunValue;
 
-    // Winning layer, in the same CurrentRun > PerGame(LocalGame) > Base priority as
-    // Config::SEARCH_ORDER (Netplay/Movie/GlobalGame/CommandLine are outside this API's
-    // three tracked layers and are never reported as the winner here).
+    // Winning layer, in the same CurrentRun > LocalGame(PerGame) > GlobalGame > Base priority
+    // as Config::SEARCH_ORDER (Common/Config/Enums.h) restricted to these four tracked layers
+    // (Netplay/Movie/CommandLine sit between CurrentRun and LocalGame/GlobalGame in the real
+    // search order but are outside this API's tracked set and are never reported as the
+    // winner here).
     NSString* layerName;
     if (currentRunValue != nil) layerName = @"CurrentRun";
     else if (perGameValue != nil) layerName = @"PerGame";
+    else if (globalGameValue != nil) layerName = @"GlobalGame";
     else if (baseValue != nil) layerName = @"Base";
     else layerName = @"Default";
 
@@ -409,9 +418,14 @@ static NSString* TypeName(DOLSettingType type) {
   for (NSString* key in targetKeys) {
     if (table[key] == nil) return NO;
   }
+  BOOL anyChanged = NO;
   for (NSString* key in targetKeys) {
-    table[key].resetBlock();
+    if (table[key].resetBlock()) anyChanged = YES;
   }
+  // Fire once for the whole batch, not once per key — OnConfigChanged() triggers listeners
+  // (e.g. the graphics backend re-reading its whole config) that are wasteful and, for a
+  // multi-key reset, observably incorrect to run N times for what is logically one change.
+  if (anyChanged) Config::OnConfigChanged();
   Config::Save();
   return YES;
 }

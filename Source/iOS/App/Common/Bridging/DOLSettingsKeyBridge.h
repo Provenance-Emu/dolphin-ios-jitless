@@ -47,20 +47,27 @@ NS_ASSUME_NONNULL_BEGIN
 + (BOOL)setKey:(NSString*)key value:(id)value;
 
 /// Snapshot every known key's resolved value plus its raw value at each of the
-/// Base / PerGame / CurrentRun config layers.
+/// Base / GlobalGame / PerGame / CurrentRun config layers.
 /// Returns a dictionary keyed by setting name; each value is a dictionary:
 ///   - `value`  : NSNumber or NSString — the resolved (winning) value, same as `snapshotAll`
-///   - `layer`  : NSString — the winning layer: "Base" / "PerGame" / "CurrentRun" / "Default"
-///                ("Default" means none of the three tracked layers has an explicit entry —
-///                the resolved value above came from the key's compiled-in default)
-///   - `layers` : NSDictionary<NSString*, id> — per-layer raw value ("Base" / "PerGame" /
-///                "CurrentRun"); a layer's key is omitted entirely when that layer has no
-///                explicit entry for this setting
-/// "PerGame" is `Config::LayerType::LocalGame` (the per-game GameSettings INI layer).
+///   - `layer`  : NSString — the winning layer: "Base" / "GlobalGame" / "PerGame" /
+///                "CurrentRun" / "Default", chosen by the same relative precedence as
+///                `Config::SEARCH_ORDER` (Common/Config/Enums.h) restricted to these four
+///                tracked layers: CurrentRun > PerGame > GlobalGame > Base. ("Default" means
+///                none of the four tracked layers has an explicit entry — the resolved value
+///                above came from the key's compiled-in default, or from an untracked layer
+///                such as Netplay/Movie/CommandLine.)
+///   - `layers` : NSDictionary<NSString*, id> — per-layer raw value ("Base" / "GlobalGame" /
+///                "PerGame" / "CurrentRun"); a layer's key is omitted entirely when that
+///                layer has no explicit entry for this setting
+/// "PerGame" is `Config::LayerType::LocalGame` (the per-game Local GameSettings INI layer,
+/// user-editable). "GlobalGame" is `Config::LayerType::GlobalGame` (the bundled
+/// `Sys/GameSettings/<id>.ini` layer, read-only — its priority sits between PerGame and Base).
 + (NSDictionary<NSString*, NSDictionary<NSString*, id>*>*)snapshotAllLayers;
 
 /// Delete `keys` from the Base, PerGame (Local GameINI), and CurrentRun layers, then
-/// persist Base to disk via `Config::Save()`. An empty array resets ALL known keys.
+/// persist to disk via `Config::Save()`, which saves every layer that has unsaved changes
+/// (not just Base). An empty array resets ALL known keys.
 /// Every key is validated against `+isKnownKey:` BEFORE any deletion happens, so an
 /// unknown key anywhere in `keys` returns NO with nothing deleted.
 + (BOOL)resetKeys:(NSArray<NSString*>*)keys;
