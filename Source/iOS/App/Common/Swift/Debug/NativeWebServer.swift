@@ -75,6 +75,12 @@ final class NativeWebServer: @unchecked Sendable {
   private var customRoutes: [CustomRoute] = []
   private var rawRoutes: [RawRoute] = []
 
+  /// When set, intercepts `Upgrade: websocket` requests: returning `false`
+  /// rejects the upgrade with 404, `true` accepts it (the handler is
+  /// expected to have already stashed `socket` for later use, e.g. to
+  /// broadcast events to it).
+  var webSocketHandler: ((_ path: String, _ socket: WebSocketConnection) -> Bool)?
+
   // MARK: - Public API
 
   var isRunning: Bool {
@@ -251,6 +257,23 @@ final class NativeWebServer: @unchecked Sendable {
               let request = HTTPRequest.parse(headersStr) else {
           self.sendResponse(on: connection, status: 400,
                             statusText: "Bad Request", body: "Bad Request")
+          return
+        }
+
+        if request.headers["upgrade"]?.lowercased() == "websocket",
+           let key = request.headers["sec-websocket-key"] {
+          guard let handler = self.webSocketHandler else {
+            self.sendResponse(on: connection, status: 404, statusText: "Not Found", body: "Not Found")
+            return
+          }
+          let socket = WebSocketConnection(connection: connection, queue: self.queue)
+          guard handler(request.path, socket) else {
+            self.sendResponse(on: connection, status: 404, statusText: "Not Found", body: "Not Found")
+            return
+          }
+          connection.send(content: WebSocketHandshake.response(for: key), completion: .contentProcessed { _ in
+            socket.start(initial: Data(bodyStart))
+          })
           return
         }
 
