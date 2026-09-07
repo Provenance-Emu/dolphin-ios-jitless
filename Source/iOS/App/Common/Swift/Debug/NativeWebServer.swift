@@ -38,6 +38,30 @@ final class NativeWebServer: @unchecked Sendable {
     let handler: CustomHandlerBlock
   }
 
+  /// A raw (non-JSON) response: status, content type, and body bytes verbatim.
+  struct RawResponse {
+    let status: Int
+    let contentType: String
+    let body: Data
+
+    static func json(_ obj: [String: Any], status: Int = 200) -> RawResponse {
+      let data = (try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys])) ?? Data("{}".utf8)
+      return RawResponse(status: status, contentType: "application/json", body: data)
+    }
+
+    static func error(_ message: String, status: Int) -> RawResponse {
+      json(["ok": false, "error": message], status: status)
+    }
+  }
+
+  typealias RawHandlerBlock = (_ request: HTTPRequest, _ body: Data?) -> RawResponse
+
+  private struct RawRoute {
+    let method: String
+    let path: String
+    let handler: RawHandlerBlock
+  }
+
   // MARK: - Configuration
 
   let port: UInt16
@@ -49,6 +73,7 @@ final class NativeWebServer: @unchecked Sendable {
   private let queue = DispatchQueue(label: "com.icube.debugserver", qos: .userInitiated)
   private let lock = NSLock()
   private var customRoutes: [CustomRoute] = []
+  private var rawRoutes: [RawRoute] = []
 
   // MARK: - Public API
 
@@ -147,6 +172,16 @@ final class NativeWebServer: @unchecked Sendable {
     else { return }
     customRoutes.append(CustomRoute(method: method.uppercased(),
                                     path: nil, regex: regex, handler: handler))
+  }
+
+  /// Register a raw-response handler for an exact method + path. Raw routes
+  /// are checked before JSON `customRoutes` and can return non-JSON bodies
+  /// (e.g. PNG bytes) with an explicit status/content type.
+  func addRawHandler(forMethod method: String, path: String,
+                     handler: @escaping RawHandlerBlock) {
+    lock.lock()
+    defer { lock.unlock() }
+    rawRoutes.append(RawRoute(method: method.uppercased(), path: path, handler: handler))
   }
 
   // MARK: - Connection Handling
@@ -265,6 +300,16 @@ final class NativeWebServer: @unchecked Sendable {
 
   private func routeRequest(on connection: NWConnection, request: HTTPRequest, body: Data) {
     lock.lock()
+    let raws = rawRoutes
+    lock.unlock()
+    if let raw = raws.first(where: { $0.method == request.method && $0.path == request.path }) {
+      let r = raw.handler(request, body.isEmpty ? nil : body)
+      sendDataResponse(on: connection, status: r.status, statusText: Self.statusText(r.status),
+                       contentType: r.contentType, body: r.body)
+      return
+    }
+
+    lock.lock()
     let routes = customRoutes
     lock.unlock()
 
@@ -282,10 +327,15 @@ final class NativeWebServer: @unchecked Sendable {
                                  queryDict.isEmpty ? nil : queryDict,
                                  body.isEmpty ? nil : body)
 
-      if let result {
+      if var result {
+        var status = 200
+        if result["ok"] as? Bool == false {
+          status = (result["status"] as? Int) ?? 400
+          result.removeValue(forKey: "status")
+        }
         if let jsonData = try? JSONSerialization.data(withJSONObject: result,
                                                       options: [.sortedKeys]) {
-          sendDataResponse(on: connection, status: 200, statusText: "OK",
+          sendDataResponse(on: connection, status: status, statusText: Self.statusText(status),
                            contentType: "application/json", body: jsonData)
         } else {
           sendResponse(on: connection, status: 500, statusText: "Internal Server Error",
@@ -301,6 +351,18 @@ final class NativeWebServer: @unchecked Sendable {
   }
 
   // MARK: - Response Helpers
+
+  static func statusText(_ code: Int) -> String {
+    switch code {
+    case 200: return "OK"
+    case 400: return "Bad Request"
+    case 404: return "Not Found"
+    case 409: return "Conflict"
+    case 500: return "Internal Server Error"
+    case 504: return "Gateway Timeout"
+    default: return "Status \(code)"
+    }
+  }
 
   private func sendResponse(on connection: NWConnection, status: Int, statusText: String,
                             body: String,
@@ -341,7 +403,7 @@ enum DebugServerError: Error, LocalizedError {
 
 // MARK: - HTTP Request Parsing
 
-private struct HTTPRequest {
+struct HTTPRequest {
   let method: String
   let path: String
   let queryString: String?
