@@ -269,7 +269,21 @@ final class NativeWebServer: @unchecked Sendable {
             self.sendResponse(on: connection, status: 404, statusText: "Not Found", body: "Not Found")
             return
           }
-          let socket = WebSocketConnection(connection: connection, queue: self.queue)
+          // Each WebSocket connection gets its own serial queue rather than sharing
+          // the server's single `self.queue` (which also serializes every HTTP
+          // connection's accept/parse/route work). Without this, one slow or
+          // chatty WebSocket client's send/receive/drain work would contend with
+          // -- and could stall -- unrelated HTTP requests and every other open
+          // WebSocket connection, since they'd all funnel through one queue.
+          // NOTE: `connection` (the underlying NWConnection) was already started
+          // via `connection.start(queue: self.queue)` above, before we know it's
+          // a WebSocket upgrade -- so its receive/send completions still arrive
+          // on `self.queue`, not on this new queue. WebSocketConnection.swift
+          // hops those completions onto its own queue explicitly before touching
+          // any of its mutable state (`buffer`, `closed`).
+          let socket = WebSocketConnection(
+            connection: connection, queue: DispatchQueue(label: "com.icube.debugserver.ws")
+          )
           guard handler(request.path, socket) else {
             self.sendResponse(on: connection, status: 404, statusText: "Not Found", body: "Not Found")
             return

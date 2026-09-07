@@ -17,6 +17,7 @@
 #include "Core/Config/MainSettings.h"
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
+#include "Core/CoreTiming.h"
 #include "Core/Movie.h"
 #include "Core/State.h"
 #include "Core/System.h"
@@ -123,12 +124,18 @@ class RingListener : public Common::Log::LogListener {
   // Core::SaveScreenShot must run on the host thread. The screenshot file it triggers is
   // written asynchronously, so the poll loop below stays off the host queue -- it only reads
   // the filesystem and never blocks the host thread.
+  //
+  // SConfig::GetInstance().GetGameID() is read here too, inside the same host-queue hop,
+  // rather than on the caller's (server) queue: SConfig is host-thread-confined the same
+  // way Core::SaveScreenShot is, and reading it from the server queue while the host thread
+  // concurrently mutates config during boot/shutdown is a data race.
+  __block std::string gameId;
   DOLHostQueueRunSync(^{
     Core::SaveScreenShot(name);
+    gameId = SConfig::GetInstance().GetGameID();
   });
   // SaveScreenShot writes <Screenshots>/<GameID>/<name>.png asynchronously (Core::Core.cpp
   // GenerateScreenshotFolderPath + SaveScreenShot(string_view)).
-  const std::string gameId = SConfig::GetInstance().GetGameID();
   std::string path = File::GetUserPath(D_SCREENSHOTS_IDX) + gameId + DIR_SEP_CHR + name + ".png";
   NSString* ns = @(path.c_str());
   NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
@@ -172,20 +179,28 @@ class RingListener : public Common::Log::LogListener {
 
 + (NSDictionary<NSString*, id>*)renderState {
   const auto& c = g_ActiveConfig;
+  // Ruling (final whole-branch review, item 6): config-sourced fields below are
+  // renamed with a `_configured` suffix -- they report what Config says, NOT
+  // what the running core is actually doing (there's no cheap accessor for the
+  // CPU core actually in use). `vi_skip_active` is the one addition here that
+  // IS a runtime read: CoreTimingManager::GetVISkip() reports whether VI-skip
+  // is in effect for the current frame, same category as the g_ActiveConfig
+  // (`c.*`) fields below it.
   return @{
     @"backend" : @(Config::Get(Config::MAIN_GFX_BACKEND).c_str()),
     @"internal_resolution" : @(c.iEFBScale),
-    @"cpu_core" : @((int)Config::Get(Config::MAIN_CPU_CORE)),
-    @"dual_core" : @(Config::Get(Config::MAIN_CPU_THREAD)),
+    @"cpu_core_configured" : @((int)Config::Get(Config::MAIN_CPU_CORE)),
+    @"dual_core_configured" : @(Config::Get(Config::MAIN_CPU_THREAD)),
     @"vertex_loader_type" : @((int)c.vertex_loader_type),
     @"fast_math" : @(Config::Get(Config::GFX_HACK_FAST_MATH)),
     @"neon_texture_decode" : @(c.bNEONTextureDecode),
     @"immediate_xfb" : @(c.bImmediateXFB),
     @"skip_efb_copy_to_ram" : @(c.bSkipEFBCopyToRam),
-    @"vi_skip_mode" : @((int)Config::Get(Config::GFX_HACK_VI_SKIP_MODE)),
-    @"overclock_enable" : @(Config::Get(Config::MAIN_OVERCLOCK_ENABLE)),
-    @"overclock" : @(Config::Get(Config::MAIN_OVERCLOCK)),
-    @"vi_overclock" : @(Config::Get(Config::MAIN_VI_OVERCLOCK)),
+    @"vi_skip_mode_configured" : @((int)Config::Get(Config::GFX_HACK_VI_SKIP_MODE)),
+    @"vi_skip_active" : @(Core::System::GetInstance().GetCoreTiming().GetVISkip()),
+    @"overclock_enable_configured" : @(Config::Get(Config::MAIN_OVERCLOCK_ENABLE)),
+    @"overclock_configured" : @(Config::Get(Config::MAIN_OVERCLOCK)),
+    @"vi_overclock_configured" : @(Config::Get(Config::MAIN_VI_OVERCLOCK)),
     @"core_state" : [self coreState],
   };
 }

@@ -160,18 +160,23 @@ static DOLLayerGetterBlock MakeAnisotropySamplesLayerGetter() {
 // can read/write and how each is dispatched. To add a key, add one entry.
 //
 // hotSwappable classification rationale:
-//  - Renderer backend, EFB internal-resolution scale, MMU, CPU core, fastmem,
-//    RAM/MEM overrides, accurate CPU cache, dual-core (CPU thread), DSP thread,
-//    backend multithreading, and shader-cache toggles are read at boot /
-//    backend-init time. Changing them mid-run is a no-op until reboot -> tagged
-//    boot-time (hotSwappable = NO). A sweep over any of these MUST reload the
-//    save state / reboot the title.
+//  - Renderer backend, MMU, CPU core, fastmem, RAM/MEM overrides, accurate
+//    CPU cache, dual-core (CPU thread), DSP thread, backend multithreading,
+//    and shader-cache toggles are read at boot / backend-init time. Changing
+//    them mid-run is a no-op until reboot -> tagged boot-time
+//    (hotSwappable = NO). A sweep over any of these MUST reload the save
+//    state / reboot the title.
 //  - Per-frame render toggles and limiter/audio params (vsync, emulation speed,
-//    volume, the perf-stat overlays, fog, widescreen hack, anisotropy*) are
-//    consumed each frame and apply live -> hotSwappable = YES.
+//    volume, the perf-stat overlays, fog, widescreen hack, anisotropy*,
+//    EFB internal-resolution scale**, the fast-math gfx hack) are consumed
+//    each frame / by the backend's live config-change diff and apply
+//    live -> hotSwappable = YES.
 //    (*anisotropy is applied live by ThermalManager via resizeSurfaceNow, so
 //     it's treated as hot-swappable here; if a future backend caches sampler
 //     state at boot, reclassify it.)
+//    (**EFB scale changes raise CONFIG_CHANGE_BIT_TARGET_SIZE in
+//     VideoConfig.cpp's config-change diff, which the backend applies without
+//     a reboot.)
 //
 // ASSUMPTION (could not verify against the running backend): the precise
 // boot-time vs live behavior of each Config key is inferred from Dolphin
@@ -204,11 +209,6 @@ static DOLLayerGetterBlock MakeAnisotropySamplesLayerGetter() {
       ^id{ return [DOLConfigBridge gfxBackend]; },
       ^(id v){ [DOLConfigBridge setGfxBackend:CoerceString(v)]; },
       MakeLayerGetter(Config::MAIN_GFX_BACKEND), MakeResetBlock(Config::MAIN_GFX_BACKEND.GetLocation()));
-
-    t[@"gfxEfbScale"] = mk(DOLSettingTypeInt, NO,
-      ^id{ return @([DOLConfigBridge gfxEfbScale]); },
-      ^(id v){ [DOLConfigBridge setGfxEfbScale:CoerceInt(v)]; },
-      MakeLayerGetter(Config::GFX_EFB_SCALE), MakeResetBlock(Config::GFX_EFB_SCALE.GetLocation()));
 
     t[@"mainCpuCore"] = mk(DOLSettingTypeInt, NO,
       ^id{ return @([DOLConfigBridge mainCpuCore]); },
@@ -315,6 +315,20 @@ static DOLLayerGetterBlock MakeAnisotropySamplesLayerGetter() {
       ^id{ return @([DOLConfigBridge gfxCpuCull]); },
       ^(id v){ [DOLConfigBridge setGfxCpuCull:CoerceBool(v)]; },
       MakeLayerGetter(Config::GFX_CPU_CULL), MakeResetBlock(Config::GFX_CPU_CULL.GetLocation()));
+
+    // EFB internal-resolution scale applies live: changing it raises
+    // CONFIG_CHANGE_BIT_TARGET_SIZE in VideoConfig.cpp's config-change diff, which the
+    // backend picks up without a reboot -> hotSwappable = YES (moved here from the
+    // boot-time section above).
+    t[@"gfxEfbScale"] = mk(DOLSettingTypeInt, YES,
+      ^id{ return @([DOLConfigBridge gfxEfbScale]); },
+      ^(id v){ [DOLConfigBridge setGfxEfbScale:CoerceInt(v)]; },
+      MakeLayerGetter(Config::GFX_EFB_SCALE), MakeResetBlock(Config::GFX_EFB_SCALE.GetLocation()));
+
+    t[@"gfxHackFastMath"] = mk(DOLSettingTypeBool, YES,
+      ^id{ return @([DOLConfigBridge gfxHackFastMath]); },
+      ^(id v){ [DOLConfigBridge setGfxHackFastMath:CoerceBool(v)]; },
+      MakeLayerGetter(Config::GFX_HACK_FAST_MATH), MakeResetBlock(Config::GFX_HACK_FAST_MATH.GetLocation()));
 
     table = [t copy];
   });
