@@ -15,8 +15,25 @@
 //   POST /api/bench/start            body {"slot":N,"seconds":S} -> start a run
 //   GET  /api/bench/result           -> last finished benchmark result
 //   POST /api/bench/sweep            body {"key":K,"values":[...],"slot":N,"seconds":S}
+//   GET  /api/health                 -> build/game/core-state/perf summary
+//   POST /api/debug/pause            -> pause the running core
+//   POST /api/debug/resume           -> resume the paused core
+//   POST /api/debug/frame-advance    body {"n":N} -> step N frames while paused
+//   GET  /api/debug/frame-count      -> emulated frame counter
+//   POST /api/debug/savestate        body {"slot":N} -> save to slot N
+//   POST /api/debug/loadstate        body {"slot":N} or {"path":P} -> load a state
+//   GET  /api/debug/screenshot       -> current frame as image/png bytes
+//   GET  /api/debug/build-info       -> SCM rev/branch/app version/configuration
+//   GET  /api/debug/render-state     -> render-relevant config/state snapshot
+//   GET  /api/logs                   -> query {"tail":N=200} -> last N log lines
 
 import Foundation
+
+/// Parses a request body as a JSON object, returning `[:]` on missing/invalid JSON.
+private func jsonBody(_ body: Data?) -> [String: Any] {
+  guard let body, let j = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else { return [:] }
+  return j
+}
 
 final class DebugAPIRoutes {
   private var registered = false
@@ -159,6 +176,86 @@ final class DebugAPIRoutes {
       return ["ok": true, "data": [
         "started": true, "key": key, "values": stringValues, "slot": slot, "seconds": seconds,
       ] as [String: Any]]
+    }
+
+    // GET /api/health — build/game/core-state/perf summary.
+    server.addCustomHandler(forMethod: "GET", path: "/api/health") { _, _, _, _ in
+      let perf = DOLPerfBridge.snapshot() as? [String: Any] ?? [:]
+      let build = DOLDebugBridge.buildInfo()
+      return ["ok": true, "data": [
+        "build_sha": build["scm_rev"] ?? "", "config": build["configuration"] ?? "",
+        "game_id": TVEmulationBridge.currentGameID(), "core_state": DOLDebugBridge.coreState(),
+        "fps": perf["fps"] ?? 0, "vps": perf["vps"] ?? 0,
+      ] as [String: Any]]
+    }
+
+    // POST /api/debug/pause
+    server.addCustomHandler(forMethod: "POST", path: "/api/debug/pause") { _, _, _, _ in
+      DOLDebugBridge.pause() ? ["ok": true, "data": ["state": DOLDebugBridge.coreState()]]
+                             : ["ok": false, "status": 409, "error": "core not running"]
+    }
+
+    // POST /api/debug/resume
+    server.addCustomHandler(forMethod: "POST", path: "/api/debug/resume") { _, _, _, _ in
+      DOLDebugBridge.resume() ? ["ok": true, "data": ["state": DOLDebugBridge.coreState()]]
+                              : ["ok": false, "status": 409, "error": "core not running"]
+    }
+
+    // POST /api/debug/frame-advance  body {"n":N}
+    server.addCustomHandler(forMethod: "POST", path: "/api/debug/frame-advance") { _, _, _, body in
+      let n = (jsonBody(body)["n"] as? NSNumber)?.intValue ?? 1
+      guard DOLDebugBridge.coreState() == "paused" else {
+        return ["ok": false, "status": 409, "error": "core must be paused (state=\(DOLDebugBridge.coreState()))"]
+      }
+      let done = DOLDebugBridge.frameAdvance(n, timeoutSeconds: 5)
+      if done < n { return ["ok": false, "status": 504, "error": "timed out after \(done)/\(n) frames"] }
+      return ["ok": true, "data": ["frames_advanced": done, "frame_count": DOLDebugBridge.frameCount()] as [String: Any]]
+    }
+
+    // GET /api/debug/frame-count
+    server.addCustomHandler(forMethod: "GET", path: "/api/debug/frame-count") { _, _, _, _ in
+      ["ok": true, "data": ["frame_count": DOLDebugBridge.frameCount()]]
+    }
+
+    // POST /api/debug/savestate  body {"slot":N}
+    server.addCustomHandler(forMethod: "POST", path: "/api/debug/savestate") { _, _, _, body in
+      let slot = (jsonBody(body)["slot"] as? NSNumber)?.intValue ?? 1
+      return DOLDebugBridge.saveStateSlot(slot) ? ["ok": true, "data": ["slot": slot]]
+                                                 : ["ok": false, "status": 409, "error": "core not running"]
+    }
+
+    // POST /api/debug/loadstate  body {"slot":N} or {"path":P}
+    server.addCustomHandler(forMethod: "POST", path: "/api/debug/loadstate") { _, _, _, body in
+      let j = jsonBody(body)
+      let ok: Bool
+      if let p = j["path"] as? String { ok = DOLDebugBridge.loadStatePath(p) }
+      else { ok = DOLDebugBridge.loadStateSlot((j["slot"] as? NSNumber)?.intValue ?? 1) }
+      return ok ? ["ok": true, "data": ["state": DOLDebugBridge.coreState()]]
+                : ["ok": false, "status": 409, "error": "core not running or state missing"]
+    }
+
+    // GET /api/debug/screenshot — raw PNG bytes (not the JSON envelope).
+    server.addRawHandler(forMethod: "GET", path: "/api/debug/screenshot") { _, _ in
+      guard let png = DOLDebugBridge.screenshotPNG(withTimeout: 3) else {
+        return .error("screenshot not produced within 3s (core running?)", status: 504)
+      }
+      return NativeWebServer.RawResponse(status: 200, contentType: "image/png", body: png)
+    }
+
+    // GET /api/debug/build-info
+    server.addCustomHandler(forMethod: "GET", path: "/api/debug/build-info") { _, _, _, _ in
+      ["ok": true, "data": DOLDebugBridge.buildInfo()]
+    }
+
+    // GET /api/debug/render-state
+    server.addCustomHandler(forMethod: "GET", path: "/api/debug/render-state") { _, _, _, _ in
+      ["ok": true, "data": DOLDebugBridge.renderState()]
+    }
+
+    // GET /api/logs  query {"tail":N=200}
+    server.addCustomHandler(forMethod: "GET", path: "/api/logs") { _, _, query, _ in
+      let n = Int(query?["tail"] ?? "") ?? 200
+      return ["ok": true, "data": ["lines": DOLDebugBridge.logTail(n)]]
     }
 
     registered = true
