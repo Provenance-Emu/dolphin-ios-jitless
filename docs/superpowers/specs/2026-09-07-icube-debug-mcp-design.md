@@ -28,7 +28,7 @@ Decisions taken during the brainstorm, in order:
 ## Topology
 
 ```
-Claude Code ──stdio──▶ tools/mcp/icube_debug (Python, FastMCP)
+Claude Code ──stdio──▶ Tools/mcp/icube_debug (Python, FastMCP)
                               │ HTTP + WebSocket, 127.0.0.1:8723
                               │ (iproxy 8723 8723 over USB)
                               ▼
@@ -37,13 +37,13 @@ Claude Code ──stdio──▶ tools/mcp/icube_debug (Python, FastMCP)
                               ▼
                  Dolphin core (Config, Core, State, screenshots)
 
-tools/mcp/icube_debug ──subprocess──▶ /Applications/Dolphin.app (oracle)
+Tools/mcp/icube_debug ──subprocess──▶ /Applications/Dolphin.app (oracle)
 ```
 
 - Device server: the existing `Source/iOS/App/Common/Swift/Debug/NativeWebServer.swift`
   on port 8723. DEBUG builds: always on. Release: only behind the existing
   opt-in toggle. Loopback-only remains; no auth in v1.
-- Mac: `tools/mcp/icube_debug/` in this repo. Python 3.12, `fastmcp`, `httpx`,
+- Mac: `Tools/mcp/icube_debug/` in this repo. Python 3.12, `fastmcp`, `httpx`,
   `websockets`, `pillow`, `scikit-image` (SSIM). Registered in Claude Code as
   server name `icube`. Stdio transport. No background process: each tool call
   is a request; streaming tools open the WebSocket for a bounded window.
@@ -214,7 +214,7 @@ like numerically.
   snapshot round-trip, 10-frame advance, screenshot.
 - CI: the Swift tests run in the existing `build.yml`; the Python tests run in
   a small `ubuntu-latest` job. `build.yml` gets `paths-ignore` for `docs/**`
-  and `tools/mcp/**` so doc and tool changes stop triggering 90-minute core
+  and `Tools/mcp/**` so doc and tool changes stop triggering 90-minute core
   builds.
 
 ## Out of scope
@@ -232,7 +232,7 @@ event schema, tracked separately).
 - `Source/iOS/App/Common/Swift/Debug/SettingsSnapshots.swift` — new.
 - `Source/iOS/App/Common/Bridging/DOLDebugBridge.mm|h` — new: frame step,
   screenshot bytes, render-state, log tail.
-- `tools/mcp/icube_debug/{server.py, device.py, oracle.py, imagediff.py, config.py}`,
-  `tools/mcp/pyproject.toml`, `tools/mcp/README.md`.
+- `Tools/mcp/icube_debug/{server.py, device.py, oracle.py, imagediff.py, config.py}`,
+  `Tools/mcp/pyproject.toml`, `Tools/mcp/README.md`.
 - `docs/dev/debug-api.md` — new, mirrors iFly's.
 - `.github/workflows/build.yml` — `paths-ignore`.

@@ -4,7 +4,7 @@
 
 **Goal:** Let a Claude Code session drive an iCube device — read/write/snapshot settings, step frames, screenshot, stream events — and compare a scenario's frame against upstream Dolphin on the Mac.
 
-**Architecture:** The device's existing `NativeWebServer` (port 8723, loopback, reached via `iproxy`) gains iFly-compatible routes, raw (PNG) responses and an RFC 6455 WebSocket fed by a `DebugEventBus`. A Python FastMCP server on the Mac (`tools/mcp/icube_debug`) mirrors the routes as tools and adds composites: scenario runs, upstream comparison via `/Applications/Dolphin.app` frame dumps + SSIM, and settings bisection.
+**Architecture:** The device's existing `NativeWebServer` (port 8723, loopback, reached via `iproxy`) gains iFly-compatible routes, raw (PNG) responses and an RFC 6455 WebSocket fed by a `DebugEventBus`. A Python FastMCP server on the Mac (`Tools/mcp/icube_debug`) mirrors the routes as tools and adds composites: scenario runs, upstream comparison via `/Applications/Dolphin.app` frame dumps + SSIM, and settings bisection.
 
 **Tech Stack:** Swift 6 (Network.framework, XCTest), Objective-C++ bridge to the Dolphin core, Python 3.12+ with `uv`, `fastmcp`, `httpx`, `websockets`, `pillow`, `scikit-image`, `respx`/`pytest`.
 
@@ -20,7 +20,7 @@
 - SSIM pass threshold 0.97; determinism guard threshold 0.995.
 - Scenario `start` is `"boot"` only in this plan; `{"state": path}` is a follow-up.
 - Phase-2 geometry detector is NOT in this plan.
-- Commits: conventional commits, `Co-Authored-By: Claude <noreply@anthropic.com>` trailer per repo convention. Run Swift steps from `Source/iOS/App` (`tuist generate` first); Python steps from `tools/mcp`.
+- Commits: conventional commits, `Co-Authored-By: Claude <noreply@anthropic.com>` trailer per repo convention. Run Swift steps from `Source/iOS/App` (`tuist generate` first); Python steps from `Tools/mcp`.
 - Xcode test invocation used throughout: `xcodebuild test -workspace iCube.xcworkspace -scheme "iCube (NJB)" -destination 'platform=iOS Simulator,name=iPhone 16' -only-testing:iCubeTests/<Class> 2>&1 | xcbeautify` (run from `Source/iOS/App`; the xcframework must exist, `make xcframework` if not).
 
 ---
@@ -42,7 +42,7 @@ Bridge (ObjC++, `Source/iOS/App/Common/Bridging/`):
 Tests (`Source/iOS/App/DolphiniOSTests/`):
 - `WebSocketFrameTests.swift`, `SettingsSnapshotsTests.swift`, `DebugEventBusTests.swift`.
 
-Mac (`tools/mcp/`):
+Mac (`Tools/mcp/`):
 - `pyproject.toml`, `README.md`
 - `icube_debug/__init__.py`, `device.py` (HTTP client), `events.py` (WS client), `imagediff.py`, `oracle.py`, `config.py`, `scenario.py`, `server.py` (FastMCP tools)
 - `tests/` — `test_device.py`, `test_events.py`, `test_imagediff.py`, `test_oracle.py`, `test_scenario.py`, `test_server.py`, `fixtures/`
@@ -1037,21 +1037,21 @@ git commit -m "debug: settings snapshots, layer view, reset routes"
 ```yaml
     paths-ignore:
       - 'docs/**'
-      - 'tools/mcp/**'
+      - 'Tools/mcp/**'
       - '**/*.md'
 ```
 
 - [ ] **Step 3: Makefile** — append:
 
 ```make
-# --- Debug MCP (tools/mcp) ---------------------------------------------------
+# --- Debug MCP (Tools/mcp) ---------------------------------------------------
 mcp-install:
-	cd "$(ROOT)/tools/mcp" && uv sync
+	cd "$(ROOT)/Tools/mcp" && uv sync
 mcp-test:
-	cd "$(ROOT)/tools/mcp" && uv run pytest -q
+	cd "$(ROOT)/Tools/mcp" && uv run pytest -q
 # Needs a device on `iproxy 8723 8723` with a game booted.
 mcp-smoke:
-	cd "$(ROOT)/tools/mcp" && uv run python -m icube_debug.smoke
+	cd "$(ROOT)/Tools/mcp" && uv run python -m icube_debug.smoke
 ```
 
 and the three names to `.PHONY` and `help`.
@@ -1060,7 +1060,7 @@ and the three names to `.PHONY` and `help`.
 
 ```bash
 git add docs/dev/debug-api.md .github/workflows/build.yml Source/iOS/App/Makefile
-git commit -m "docs(debug-api): route reference; ci: skip core builds for docs and tools/mcp"
+git commit -m "docs(debug-api): route reference; ci: skip core builds for docs and Tools/mcp"
 ```
 
 ---
@@ -1068,7 +1068,7 @@ git commit -m "docs(debug-api): route reference; ci: skip core builds for docs a
 ### Task 9: Python project and device client
 
 **Files:**
-- Create: `tools/mcp/pyproject.toml`, `tools/mcp/icube_debug/__init__.py`, `tools/mcp/icube_debug/device.py`, `tools/mcp/tests/test_device.py`
+- Create: `Tools/mcp/pyproject.toml`, `Tools/mcp/icube_debug/__init__.py`, `Tools/mcp/icube_debug/device.py`, `Tools/mcp/tests/test_device.py`
 
 **Interfaces:**
 - Produces: `class DeviceError(Exception)`, `class Device: def __init__(self, base: str = "127.0.0.1:8723", timeout: float = 30) ; def get(self, path, **params) -> dict ; def post(self, path, body: dict | None = None) -> dict ; def get_bytes(self, path) -> bytes`. `get`/`post` return `data` from the envelope and raise `DeviceError(f"{status}: {error}")` on `ok: false` or non-2xx.
@@ -1160,7 +1160,7 @@ class Device:
 - [ ] **Step 6: Commit**
 
 ```bash
-git add tools/mcp/pyproject.toml tools/mcp/icube_debug/__init__.py tools/mcp/icube_debug/device.py tools/mcp/tests/test_device.py
+git add Tools/mcp/pyproject.toml Tools/mcp/icube_debug/__init__.py Tools/mcp/icube_debug/device.py Tools/mcp/tests/test_device.py
 git commit -m "mcp: python project and device HTTP client"
 ```
 
@@ -1169,7 +1169,7 @@ git commit -m "mcp: python project and device HTTP client"
 ### Task 10: Event stream client
 
 **Files:**
-- Create: `tools/mcp/icube_debug/events.py`, `tools/mcp/tests/test_events.py`
+- Create: `Tools/mcp/icube_debug/events.py`, `Tools/mcp/tests/test_events.py`
 
 **Interfaces:**
 - Produces: `async def collect_events(base: str, kinds: list[str] | None, seconds: float) -> list[dict]` — connects to `ws://{base}/ws/events`, returns parsed JSON events whose `kind` is in `kinds` (or all), stops after `seconds`.
@@ -1227,7 +1227,7 @@ async def collect_events(base: str, kinds: list[str] | None, seconds: float) -> 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tools/mcp/icube_debug/events.py tools/mcp/tests/test_events.py
+git add Tools/mcp/icube_debug/events.py Tools/mcp/tests/test_events.py
 git commit -m "mcp: bounded WebSocket event collector"
 ```
 
@@ -1236,7 +1236,7 @@ git commit -m "mcp: bounded WebSocket event collector"
 ### Task 11: Image diff
 
 **Files:**
-- Create: `tools/mcp/icube_debug/imagediff.py`, `tools/mcp/tests/test_imagediff.py`
+- Create: `Tools/mcp/icube_debug/imagediff.py`, `Tools/mcp/tests/test_imagediff.py`
 
 **Interfaces:**
 - Produces: `def compare(a_png: bytes, b_png: bytes, tiles: int = 8) -> DiffResult` with `@dataclass DiffResult: score: float; tile_scores: list[list[float]]; diff_png: bytes; size: tuple[int,int]`. Both images are resized to the smaller common size, converted to grayscale for SSIM; `diff_png` is a heatmap (red intensity = 1 − tile score) over image A.
@@ -1321,7 +1321,7 @@ def compare(a_png: bytes, b_png: bytes, tiles: int = 8) -> DiffResult:
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tools/mcp/icube_debug/imagediff.py tools/mcp/tests/test_imagediff.py
+git add Tools/mcp/icube_debug/imagediff.py Tools/mcp/tests/test_imagediff.py
 git commit -m "mcp: SSIM image diff with tile heatmap"
 ```
 
@@ -1330,7 +1330,7 @@ git commit -m "mcp: SSIM image diff with tile heatmap"
 ### Task 12: Config and upstream oracle
 
 **Files:**
-- Create: `tools/mcp/icube_debug/config.py`, `tools/mcp/icube_debug/oracle.py`, `tools/mcp/tests/test_oracle.py`
+- Create: `Tools/mcp/icube_debug/config.py`, `Tools/mcp/icube_debug/oracle.py`, `Tools/mcp/tests/test_oracle.py`
 
 **Interfaces:**
 - Produces: `def load_config(path: Path | None = None) -> Config` (`@dataclass Config: dolphin_app: Path; cpu_core: int; games: dict[str, Path]; home: Path`) reading `~/.icube-debug/config.toml` (create with defaults if missing); `def dump_frames(cfg: Config, game_id: str, frames: int, overrides: dict[str, str] | None = None, timeout: float = 300) -> Path` — runs Dolphin.app headless with frame dumping as PNGs into a temp user dir, waits until frame `frames` exists, kills Dolphin, returns the PNG path; `class OracleError(Exception)`.
@@ -1459,7 +1459,7 @@ Verify the frame-dump filename pattern on this machine once (`ls <user>/Dump/Fra
 - [ ] **Step 6: Commit**
 
 ```bash
-git add tools/mcp/icube_debug/config.py tools/mcp/icube_debug/oracle.py tools/mcp/tests/test_oracle.py
+git add Tools/mcp/icube_debug/config.py Tools/mcp/icube_debug/oracle.py Tools/mcp/tests/test_oracle.py
 git commit -m "mcp: config file and upstream Dolphin frame-dump oracle"
 ```
 
@@ -1468,7 +1468,7 @@ git commit -m "mcp: config file and upstream Dolphin frame-dump oracle"
 ### Task 13: Scenarios and comparison
 
 **Files:**
-- Create: `tools/mcp/icube_debug/scenario.py`, `tools/mcp/tests/test_scenario.py`
+- Create: `Tools/mcp/icube_debug/scenario.py`, `Tools/mcp/tests/test_scenario.py`
 
 **Interfaces:**
 - Consumes: `Device` (Task 9), `compare` (Task 11), `dump_frames`/`Config` (Task 12).
@@ -1591,7 +1591,7 @@ def bisect_settings(dev, cfg: Config, sc: Scenario, keys: list[str], boot, upstr
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tools/mcp/icube_debug/scenario.py tools/mcp/tests/test_scenario.py
+git add Tools/mcp/icube_debug/scenario.py Tools/mcp/tests/test_scenario.py
 git commit -m "mcp: scenarios, upstream comparison with determinism guard, settings bisection"
 ```
 
@@ -1600,7 +1600,7 @@ git commit -m "mcp: scenarios, upstream comparison with determinism guard, setti
 ### Task 14: FastMCP server, smoke, README, registration
 
 **Files:**
-- Create: `tools/mcp/icube_debug/server.py`, `tools/mcp/icube_debug/smoke.py`, `tools/mcp/README.md`, `tools/mcp/tests/test_server.py`
+- Create: `Tools/mcp/icube_debug/server.py`, `Tools/mcp/icube_debug/smoke.py`, `Tools/mcp/README.md`, `Tools/mcp/tests/test_server.py`
 
 **Interfaces:**
 - Consumes everything above.
@@ -1779,7 +1779,7 @@ if __name__ == "__main__":
 - [ ] **Step 5: README** — setup (`brew install libimobiledevice` for `iproxy`, `uv sync`), registration:
 
 ```bash
-claude mcp add icube -- uv --directory /ABS/PATH/tools/mcp run icube-debug-mcp
+claude mcp add icube -- uv --directory /ABS/PATH/Tools/mcp run icube-debug-mcp
 ```
 
 the `config.toml` game map, and a 5-line "first session" walkthrough (`health` → `render_state` → `snapshot_save before` → change → `snapshot_diff` → `compare_with_upstream`).
@@ -1798,7 +1798,7 @@ Expected: health JSON, 10 frames advanced, a non-zero screenshot byte count.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add tools/mcp/icube_debug/server.py tools/mcp/icube_debug/smoke.py tools/mcp/README.md tools/mcp/tests/test_server.py
+git add Tools/mcp/icube_debug/server.py Tools/mcp/icube_debug/smoke.py Tools/mcp/README.md Tools/mcp/tests/test_server.py
 git commit -m "mcp: FastMCP server with mirror, streaming and comparison tools"
 ```
 
