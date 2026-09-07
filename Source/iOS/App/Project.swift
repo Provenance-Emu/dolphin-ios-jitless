@@ -423,7 +423,23 @@ let iCubeTests = Target.target(
     sources: ["DolphiniOSTests/**/*.swift"],
     dependencies: [.target(name: "iCube")],
     settings: .settings(
-        base: ["CLANG_CXX_LANGUAGE_STANDARD": "gnu++17", "SWIFT_VERSION": "5.0"],
+        base: [
+            "CLANG_CXX_LANGUAGE_STANDARD": "gnu++17",
+            "SWIFT_VERSION": "5.0",
+            // The test target uses `@testable import iCube` and doesn't need its own
+            // ObjC bridging header, so clear it (see the identical fix on the
+            // LiveActivityExtension target above). That alone isn't sufficient though:
+            // with SWIFT_ENABLE_EXPLICIT_MODULES, `@testable import iCube` makes the
+            // Swift explicit-module dependency scanner re-resolve iCube's OWN bridging
+            // header (Common/Swift/BridgingHeader.h) using iCubeTests' Clang search
+            // paths, not iCube's — so iCubeTests also needs iCube's
+            // USER_HEADER_SEARCH_PATHS (quote-includes like "AudioSessionManager.h"
+            // resolve via Common/** and DolphiniOS/**) or the scan fails with
+            // "'AudioSessionManager.h' file not found" even though iCubeTests itself
+            // never imports that header directly.
+            "SWIFT_OBJC_BRIDGING_HEADER": "",
+            "USER_HEADER_SEARCH_PATHS": ["$(inherited)", "$(SRCROOT)/Common/**", "$(SRCROOT)/DolphiniOS/**"],
+        ],
         configurations: secondaryConfigs
     )
 )

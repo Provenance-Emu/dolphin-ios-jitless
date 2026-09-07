@@ -3,7 +3,7 @@
 
 import XCTest
 
-@testable import DolphiniOS
+@testable import iCube
 
 private final class FakeWriter: ControllerConfigWriting {
   var calls: [String] = []
