@@ -1,4 +1,5 @@
 from io import BytesIO
+import math
 from PIL import Image, ImageDraw
 from icube_debug.imagediff import compare
 
@@ -34,6 +35,39 @@ def test_corruption_lowers_score_and_localises():
     assert min(top_row) < min(bottom_row)
 
 
-def test_size_mismatch_is_handled():
+def test_same_rasterization_resized_scores_high():
+    """Same rasterization resized with LANCZOS should score >= 0.97."""
+    original = png(scene)
+    # Manually upscale using LANCZOS via Pillow
+    im = Image.open(BytesIO(original))
+    upscaled_im = im.resize((512, 384), Image.LANCZOS)
+    upscaled = BytesIO()
+    upscaled_im.save(upscaled, "PNG")
+    upscaled_bytes = upscaled.getvalue()
+
+    r = compare(original, upscaled_bytes)
+    assert r.size == (256, 192)
+    assert r.score >= 0.97
+
+
+def test_independent_rasterizations_at_different_sizes_score_low():
+    """Independent renders at different native sizes score low (0.6-0.85)."""
+    # This is a documented limitation: frames must be rasterized at the same
+    # resolution on both sides for meaningful comparison (Task 13 enforces
+    # 1× internal resolution on device and oracle).
     r = compare(png(scene), png(scene, size=(512, 384)))
-    assert r.size == (256, 192) and r.score > 0.7
+    assert r.size == (256, 192)
+    assert 0.6 <= r.score <= 0.85
+
+
+def test_small_tiles_do_not_report_perfect():
+    """Small tiles should not silently report 1.0; NaN tiles are excluded."""
+    # With 32×32 tiles on a 256×192 image, tiles are 8×6 pixels.
+    # After grayscale conversion, smaller tiles should not all score 1.0.
+    r = compare(png(scene), png(scene_broken), tiles=32)
+    assert r.size == (256, 192)
+
+    # Flatten tile scores and check for at least one non-NaN score < 0.97
+    flat_scores = [s for row in r.tile_scores for s in row if not math.isnan(s)]
+    assert len(flat_scores) > 0, "No valid (non-NaN) tile scores found"
+    assert any(s < 0.97 for s in flat_scores), "Expected at least one tile score < 0.97, but all are >= 0.97"

@@ -1,6 +1,13 @@
+"""SSIM-based image diff with per-tile heatmap.
+
+Compares two PNG images using structural similarity (SSIM) on grayscale.
+Note: Grayscale-only SSIM cannot detect color-only regressions; both images
+must be rasterized at the same resolution for meaningful tile-level comparisons.
+"""
 from __future__ import annotations
 from dataclasses import dataclass
 from io import BytesIO
+import math
 import numpy as np
 from PIL import Image
 from skimage.metrics import structural_similarity
@@ -32,13 +39,21 @@ def compare(a_png: bytes, b_png: bytes, tiles: int = 8) -> DiffResult:
         row = []
         for tx in range(tiles):
             sa, sb = ga[ty*th:(ty+1)*th, tx*tw:(tx+1)*tw], gb[ty*th:(ty+1)*th, tx*tw:(tx+1)*tw]
-            s = float(structural_similarity(sa, sb, data_range=255.0, win_size=7)) if min(sa.shape) >= 7 else 1.0
-            row.append(round(s, 4))
-            red = int(255 * max(0.0, 1.0 - s))
-            for y in range(ty*th, (ty+1)*th):
-                for x in range(tx*tw, (tx+1)*tw):
-                    r, g, bb = px[x, y]
-                    px[x, y] = (min(255, r + red), g // 2 if red > 40 else g, bb // 2 if red > 40 else bb)
+            # Compute dynamic window size: largest odd integer <= min(sa.shape), clamped to [3, 7]
+            min_dim = min(sa.shape)
+            win = min(7, min_dim if min_dim % 2 == 1 else min_dim - 1)
+            if win < 3:
+                s = float("nan")
+            else:
+                s = float(structural_similarity(sa, sb, data_range=255.0, win_size=win))
+            row.append(round(s, 4) if not math.isnan(s) else s)
+            # Skip heatmap coloring for NaN tiles
+            if not math.isnan(s):
+                red = int(255 * max(0.0, 1.0 - s))
+                for y in range(ty*th, (ty+1)*th):
+                    for x in range(tx*tw, (tx+1)*tw):
+                        r, g, bb = px[x, y]
+                        px[x, y] = (min(255, r + red), g // 2 if red > 40 else g, bb // 2 if red > 40 else bb)
         tile_scores.append(row)
     out = BytesIO()
     heat.save(out, "PNG")
