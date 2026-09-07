@@ -57,6 +57,12 @@ final class DebugServerManager: NSObject {
   @objc func start() {
     guard isEnabled else { return }
     guard !isRunning else { return }
+    server.webSocketHandler = { path, socket in
+      guard path == "/ws/events" else { return false }
+      DebugEventBus.shared.attach(socket)
+      return true
+    }
+    DebugEventBus.shared.startProducers()
     routes.registerRoutes(on: server)
     Task {
       do {
