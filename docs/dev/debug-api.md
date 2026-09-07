@@ -47,12 +47,17 @@ An `ok: false` response carries an HTTP status code:
 | `400` | Bad request — missing/non-JSON-object body, wrong field type, value out of range, or (implicit default, see below) any other `ok:false` route that does not set a status | frame-advance body isn't `{"n": <1...600>}` |
 | `404` | Unknown key, unknown route, or unknown snapshot name | `POST /api/settings/reset` with an unknown key in `"keys"`; `GET /api/settings/snapshots/{a}/diff/{b}` when `a` or `b` doesn't exist |
 | `409` | Core is in the wrong state for the request | `pause`/`resume`/`savestate`/`loadstate` when the core isn't running; `frame-advance` when the core isn't paused |
+| `500` | Handler error — the route's handler returned invalid JSON | snapshot write failure |
 | `504` | The operation didn't complete before its timeout | `frame-advance` didn't reach `n` frames within 5s/frame; `screenshot` wasn't produced within 3s |
 
 Routes that return `["ok": false, "error": ...]` **without** an explicit
 status (e.g. `POST /api/settings/<key>` for an unknown key, `POST
 /api/bench/sweep` for a missing `key`/`values`) fall back to the server's
 default of **400**.
+
+**Note:** An unmatched HTTP route returns plain-text `404 Not Found` (Content-Type: `text/plain`),
+not the JSON envelope. Only routes that exist (i.e. match the path) return the JSON `{"ok": false, "error": ...}` 
+envelope with the status codes above.
 
 ## Settings routes
 
@@ -61,7 +66,7 @@ default of **400**.
 | `GET` | `/api/settings` | — | every known key → its resolved value + metadata (`value`, `type`, `hotSwappable`) |
 | `GET` | `/api/settings/all` | — | every known key → `{value, layer, layers: {Base, GlobalGame, PerGame, CurrentRun}}` (see below) |
 | `GET` | `/api/settings/pergame` | — | only keys that have an explicit **PerGame** (Local GameINI) override: key → that layer's raw value |
-| `POST` | `/api/settings/<key>` | `{"value": ...}` | `{key, value, hotSwappable, note}`; `note` says whether the change applied live or needs a reboot/state reload |
+| `POST` | `/api/settings/<key>` | `{"value": ...}` | `{key, value, hotSwappable, note}`; `note` says whether the change applied live or needs a reboot/state reload; `value` is echoed as a string regardless of the request type |
 | `POST` | `/api/settings/reset` | `{"keys": [...]}`, optional (empty/missing resets **all** known keys) | `{reset: [...] \| "all"}` |
 | `GET` | `/api/settings/snapshots` | — | `[{name, taken_at, game_id}, ...]` |
 | `POST` | `/api/settings/snapshots` | `{"name": "..."}` | `{name}` — captures every known key's current per-layer state under `name` |
@@ -99,7 +104,7 @@ key. `"PerGame"` is the user-editable Local GameSettings INI layer;
 |---|---|---|---|
 | `GET` | `/api/savestates` | — | `[{name, size, modified, slot?}, ...]` — entries in the StateSaves directory (slot files `*.sNN` plus `lastState.sav`) |
 | `POST` | `/api/debug/savestate` | `{"slot": N}`, optional (defaults to `1`) | `{slot}`; `409` if the core isn't running |
-| `POST` | `/api/debug/loadstate` | `{"slot": N}` or `{"path": "..."}`, exactly one required | `{state}` (the resulting core state); `409` if the core isn't running or the state is missing |
+| `POST` | `/api/debug/loadstate` | `{"slot": N}` or `{"path": "..."}`, at least one required; `path` takes priority when both are present | `{state}` (the resulting core state); `409` if the core isn't running or the state is missing |
 
 ## Debug control
 
@@ -136,7 +141,7 @@ object with `t` (unix ms) and `kind`:
 {"t": 1732999999000, "kind": "settings.changed", "key": "...", "old": ..., "new": ...}
 {"t": 1732999999000, "kind": "perf.sample", "fps": 59.9, "vps": 60.0, "frame_ms": 16.4}
 {"t": 1732999999000, "kind": "log.line", "level": "WARN", "msg": "..."}
-{"t": 1732999999000, "kind": "core.state", "state": "running" | "paused" | "stopped"}
+{"t": 1732999999000, "kind": "core.state", "state": "uninitialized" | "starting" | "running" | "paused" | "stopping"}
 ```
 
 - `settings.changed` — fired on every resolved-value change detected after a
