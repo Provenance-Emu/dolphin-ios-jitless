@@ -347,10 +347,17 @@ def main():
             continue
         meta = next(s for s in shots if s["name"] == name)
         base = name.rsplit(".", 1)[0]
+        # captions.json is keyed by basename alone, so a name used on more than
+        # one device (library-light.png, settings-root.png) resolves to ONE
+        # entry — the last pass written wins. Keep alt/caption device-neutral in
+        # shots.json for those names rather than describing one device.
+        # "theme" is the caption's label, not the simulator command: tvOS has a
+        # dark UI but ignores `simctl ui appearance`, so it sets theme without
+        # an appearance.
         captions[base] = {
             "alt": meta.get("alt", meta.get("desc", base)),
             "caption": meta.get("caption", ""),
-            "theme": meta.get("appearance", "light"),
+            "theme": meta.get("theme", meta.get("appearance", "light")),
             "order": meta.get("order", 999),
         }
     cap_path = os.path.join(args.out, "captions.json")

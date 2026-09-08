@@ -35,7 +35,7 @@
         "desc": "Library grid, light appearance, favourites row + platform filters",
         "appearance": "light",
         "order": 1,
-        "alt": "iCube game library on iPhone showing a grid of cover art",
+        "alt": "iCube game library showing a grid of generated cover art",
         "caption": "Your GameCube and Wii library, with cover art, favourites and platform filters.",
         "steps": [
           {
@@ -53,7 +53,7 @@
         "desc": "Library grid, dark appearance",
         "appearance": "dark",
         "order": 2,
-        "alt": "iCube game library on iPhone in dark mode",
+        "alt": "iCube game library in dark mode",
         "caption": "Light and dark, everywhere.",
         "steps": [
           {
@@ -226,8 +226,8 @@
         "desc": "Library grid on iPad, light appearance",
         "appearance": "light",
         "order": 1,
-        "alt": "iCube library on iPad Pro",
-        "caption": "A full-size library on iPad.",
+        "alt": "iCube game library showing a grid of generated cover art",
+        "caption": "Your GameCube and Wii library, with cover art, favourites and platform filters.",
         "steps": [
           {
             "do": "settle",
@@ -243,7 +243,7 @@
         "desc": "Library grid on iPad, dark appearance",
         "appearance": "dark",
         "order": 2,
-        "alt": "iCube library on iPad Pro in dark mode",
+        "alt": "iCube game library in dark mode",
         "caption": "Light and dark, everywhere.",
         "steps": [
           {
@@ -260,7 +260,7 @@
         "desc": "Settings root on iPad",
         "appearance": "dark",
         "order": 3,
-        "alt": "iCube settings on iPad",
+        "alt": "iCube settings screen",
         "caption": "Every Dolphin setting, organised for touch.",
         "steps": [
           {
@@ -286,7 +286,7 @@
         "desc": "Graphics ▸ Enhancements on iPad",
         "appearance": "dark",
         "order": 4,
-        "alt": "Graphics enhancement settings on iPad",
+        "alt": "Graphics enhancement settings in iCube",
         "caption": "Render above native resolution, with anisotropic filtering and MSAA.",
         "steps": [
           {
@@ -346,22 +346,34 @@
         ],
         "verify": [
           "Starfall Rally"
-        ]
+        ],
+        "theme": "dark"
       },
       {
         "name": "settings-root.png",
         "desc": "tvOS settings root",
         "order": 2,
-        "alt": "iCube settings on Apple TV",
-        "caption": "The same settings, on the big screen.",
+        "alt": "iCube settings screen",
+        "caption": "Every Dolphin setting, organised for touch.",
         "steps": [
           {
-            "do": "tap",
+            "do": "activate",
             "label": "Settings",
             "type": "button",
-            "settle": 3.0
+            "settle": 1.5
+          },
+          {
+            "do": "wait",
+            "label": "Graphics Settings",
+            "timeout": 12
+          },
+          {
+            "do": "settle",
+            "seconds": 2.0
           }
-        ]
+        ],
+        "_note": "tvOS is focus-driven: a coordinate tap lands on the focus engine, not the button, and silently leaves the library on screen. activate performs an AXPress on the element itself.",
+        "theme": "dark"
       }
     ]
   }
