@@ -1,0 +1,7 @@
+# run.sh cds here and defaults its output into this directory: DerivedData in
+# .dd/ (several GB), captures in captures/, and a per-platform xcodebuild log.
+# None of it belongs in the repo.
+.dd*/
+captures/
+.build-*.log
+__pycache__/

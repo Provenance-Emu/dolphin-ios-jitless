@@ -11,6 +11,18 @@ OUT=/tmp/shots ./run.sh         # somewhere else
 python3 capture.py --list       # what the manifest covers
 ```
 
+`run.sh` writes into this directory by default — DerivedData to `.dd/` (several
+GB), captures to `captures/`, and a `.build-<class>.log` per platform. All of it
+is gitignored.
+
+`SKIP_BUILD=1` reuses the app **from `$DD`**, which defaults to `./.dd`. If you
+built somewhere else (Xcode, or a scratch derived-data path), pass that path too
+or the run dies with "iCube.app not found":
+
+```bash
+SKIP_BUILD=1 DD=/path/to/derived-data PLATFORM=iphone ./run.sh
+```
+
 Output is `$OUT/<device>/<name>.png` plus `$OUT/captions.json`, which is exactly
 the contract the website's importer expects:
 
