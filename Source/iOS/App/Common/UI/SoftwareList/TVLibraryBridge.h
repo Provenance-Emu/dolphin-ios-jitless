@@ -9,6 +9,14 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface TVLibraryBridge : NSObject
 
+/// YES when the app was launched with `-SCREENSHOT_MODE 1` (a DEBUG-only
+/// marketing-capture mode). In this mode `currentGames` returns a fixed set of
+/// synthetic, non-bootable demo titles with procedurally generated cover art
+/// instead of scanning for disc images, so the library can be photographed
+/// without shipping or possessing any copyrighted content.
+/// Always NO in Release builds.
++ (BOOL)isScreenshotDemoMode;
+
 + (NSArray<TVGameItem*>*)currentGames;
 + (void)rescanAndFetchMetadataWithCompletion:(void(^)(void))completion;
 + (void)rescanLocalAndFetchMetadata:(void(^)(void))completion;

@@ -31,8 +31,29 @@ NS_ASSUME_NONNULL_BEGIN
 /// User flag for Favorites (persisted via NSUserDefaults)
 @property (nonatomic, getter=isFavorite) BOOL favorite;
 
+/// YES for a synthetic entry created by screenshot mode (see
+/// `TVLibraryBridge.isScreenshotDemoMode`). Such an item has NO backing
+/// `GameFile` — its `wrapper` is nil despite the nonnull annotation — so it
+/// must never be booted. Always NO in Release builds.
+@property (nonatomic, readonly, getter=isDemoItem) BOOL demoItem;
+
 - (instancetype)initWithWrapper:(GameFilePtrWrapper *)wrapper NS_DESIGNATED_INITIALIZER;
 - (instancetype)init NS_UNAVAILABLE;
+
+#ifdef DEBUG
+/// DEBUG-only initializer for screenshot mode's fake library. Populates the
+/// same ivars `initWithWrapper:` does, from literal values instead of a
+/// `GameFile`, and renders a procedural cover so no copyrighted art ships.
+/// `platform` is a `DiscIO::Platform` raw value (0 = GameCube disc,
+/// 2 = Wii disc, 3 = Wii WAD).
+- (instancetype)initWithDemoTitle:(NSString *)title
+                           gameID:(NSString *)gameID
+                         platform:(NSInteger)platform
+                            maker:(NSString *)maker
+                      countryName:(NSString *)countryName
+                         fileSize:(NSUInteger)fileSize
+                        accentHue:(CGFloat)accentHue;
+#endif
 
 @end
 

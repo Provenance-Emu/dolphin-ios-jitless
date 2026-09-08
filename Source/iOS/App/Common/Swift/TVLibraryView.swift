@@ -498,8 +498,15 @@ struct TVLibraryView: View {
         set: { if !$0 { navigateTo = nil } }
       )) {
         if let item = navigateTo {
-          EmulationScreen(game: item)
-            .onAppear { NSLog("[INPUT] NavigationDestination -> EmulationScreen for game: %@", item.title) }
+          // Screenshot mode's demo entries have no backing GameFile and no file
+          // on disk — booting one would fail (or worse). Show a placeholder so a
+          // stray tap during a capture run cannot break the pass.
+          if item.isDemoItem {
+            ScreenshotDemoUnavailableView(title: item.title)
+          } else {
+            EmulationScreen(game: item)
+              .onAppear { NSLog("[INPUT] NavigationDestination -> EmulationScreen for game: %@", item.title) }
+          }
         }
       }
       .navigationDestinationItemCompat(item: $navigateToSaveStates) { route in
@@ -2999,3 +3006,28 @@ struct LibrarySearchableModifier: ViewModifier {
   }
 }
 #endif
+
+
+/// Stand-in for `EmulationScreen` when a screenshot-mode demo entry is opened.
+/// Demo entries are synthetic (see `TVLibraryBridge.isScreenshotDemoMode`) and
+/// have nothing to boot; this is never reachable in a Release build because
+/// `isDemoItem` is always false there.
+struct ScreenshotDemoUnavailableView: View {
+  let title: String
+
+  var body: some View {
+    VStack(spacing: 16) {
+      Image(systemName: "photo.on.rectangle.angled")
+        .font(.system(size: 48, weight: .light))
+        .foregroundStyle(.secondary)
+      Text(title)
+        .font(.title2.weight(.semibold))
+      Text("Demo entry — screenshot mode has no disc image to boot.")
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.center)
+    }
+    .padding(40)
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+}

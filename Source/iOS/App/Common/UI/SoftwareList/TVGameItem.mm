@@ -26,6 +26,7 @@
     NSString *_gametdbID;
     NSUInteger _fileSize;
     NSInteger _platform;
+    BOOL _demoItem;
 }
 
 - (instancetype)initWithWrapper:(GameFilePtrWrapper *)wrapper {
@@ -208,6 +209,7 @@
 - (NSString *)gametdbID { return _gametdbID; }
 - (NSUInteger)fileSize { return _fileSize; }
 - (NSInteger)platform { return _platform; }
+- (BOOL)isDemoItem { return _demoItem; }
 
 - (BOOL)isFavorite {
     if (!_gameID) return NO;
@@ -224,5 +226,148 @@
     [d setObject:fav forKey:@"favorites_by_gameid"];
     [[NSNotificationCenter defaultCenter] postNotificationName:@"FavoritesChanged" object:nil userInfo:@{ @"gameID": _gameID }];
 }
+
+
+#ifdef DEBUG
+
+#pragma mark - Screenshot-mode demo items
+
+/// Renders a procedural 400x600 cover: a hue-derived vertical gradient, a few
+/// deterministic geometric accents, the title, and a platform strip. Entirely
+/// synthetic — nothing copyrighted, nothing loaded from disk.
+static UIImage *DOLDemoCoverImage(NSString *title, NSString *platformLabel, CGFloat hue) {
+    const CGSize size = CGSizeMake(400, 600);
+    UIGraphicsImageRendererFormat *fmt = [UIGraphicsImageRendererFormat preferredFormat];
+    fmt.opaque = YES;
+    fmt.scale = 1.0;
+    UIGraphicsImageRenderer *r = [[UIGraphicsImageRenderer alloc] initWithSize:size format:fmt];
+
+    return [r imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+        CGContextRef c = ctx.CGContext;
+
+        // Background gradient: deep, saturated top -> near-black bottom.
+        UIColor *top = [UIColor colorWithHue:hue saturation:0.72 brightness:0.62 alpha:1.0];
+        UIColor *bottom = [UIColor colorWithHue:fmod(hue + 0.08, 1.0) saturation:0.85 brightness:0.14 alpha:1.0];
+        CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+        NSArray *colors = @[(__bridge id)top.CGColor, (__bridge id)bottom.CGColor];
+        CGFloat locs[2] = {0.0, 1.0};
+        CGGradientRef grad = CGGradientCreateWithColors(cs, (__bridge CFArrayRef)colors, locs);
+        CGContextDrawLinearGradient(c, grad, CGPointZero, CGPointMake(0, size.height), 0);
+        CGGradientRelease(grad);
+        CGColorSpaceRelease(cs);
+
+        // Deterministic accents: concentric arcs + a diagonal band. The seed is
+        // the hue, so a given title always renders identically.
+        const NSUInteger seed = (NSUInteger)(hue * 997.0);
+        CGContextSaveGState(c);
+        CGContextSetBlendMode(c, kCGBlendModeScreen);
+        for (int i = 0; i < 4; i++) {
+            CGFloat rad = 90.0 + i * 62.0 + (seed % 17);
+            CGFloat cx = 60.0 + (seed % 5) * 34.0;
+            CGFloat cy = 190.0 + (seed % 7) * 12.0;
+            [[UIColor colorWithHue:fmod(hue + 0.5, 1.0) saturation:0.5 brightness:0.30 alpha:0.34] setStroke];
+            CGContextSetLineWidth(c, 10.0);
+            CGContextAddArc(c, cx, cy, rad, 0, M_PI * 2, 0);
+            CGContextStrokePath(c);
+        }
+        CGContextRestoreGState(c);
+
+        CGContextSaveGState(c);
+        CGContextSetBlendMode(c, kCGBlendModeOverlay);
+        [[UIColor colorWithWhite:1.0 alpha:0.16] setFill];
+        CGContextMoveToPoint(c, 0, size.height * 0.56);
+        CGContextAddLineToPoint(c, size.width, size.height * 0.40);
+        CGContextAddLineToPoint(c, size.width, size.height * 0.50);
+        CGContextAddLineToPoint(c, 0, size.height * 0.66);
+        CGContextClosePath(c);
+        CGContextFillPath(c);
+        CGContextRestoreGState(c);
+
+        // Bottom scrim so the title always reads.
+        CGColorSpaceRef cs2 = CGColorSpaceCreateDeviceRGB();
+        NSArray *scrim = @[(__bridge id)[UIColor colorWithWhite:0.0 alpha:0.0].CGColor,
+                           (__bridge id)[UIColor colorWithWhite:0.0 alpha:0.86].CGColor];
+        CGFloat locs2[2] = {0.0, 1.0};
+        CGGradientRef g2 = CGGradientCreateWithColors(cs2, (__bridge CFArrayRef)scrim, locs2);
+        CGContextDrawLinearGradient(c, g2, CGPointMake(0, size.height * 0.52), CGPointMake(0, size.height), 0);
+        CGGradientRelease(g2);
+        CGColorSpaceRelease(cs2);
+
+        // Title.
+        NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new];
+        ps.alignment = NSTextAlignmentLeft;
+        ps.lineBreakMode = NSLineBreakByWordWrapping;
+        NSDictionary *titleAttrs = @{
+            NSFontAttributeName: [UIFont systemFontOfSize:44 weight:UIFontWeightHeavy],
+            NSForegroundColorAttributeName: [UIColor whiteColor],
+            NSParagraphStyleAttributeName: ps,
+        };
+        [title drawInRect:CGRectMake(28, 396, size.width - 56, 150) withAttributes:titleAttrs];
+
+        // Platform strip.
+        NSDictionary *platAttrs = @{
+            NSFontAttributeName: [UIFont systemFontOfSize:20 weight:UIFontWeightSemibold],
+            NSForegroundColorAttributeName: [UIColor colorWithWhite:1.0 alpha:0.78],
+            NSKernAttributeName: @(2.2),
+        };
+        [[platformLabel uppercaseString] drawAtPoint:CGPointMake(28, 552) withAttributes:platAttrs];
+    }];
+}
+
+- (instancetype)initWithDemoTitle:(NSString *)title
+                           gameID:(NSString *)gameID
+                         platform:(NSInteger)platform
+                            maker:(NSString *)maker
+                      countryName:(NSString *)countryName
+                         fileSize:(NSUInteger)fileSize
+                        accentHue:(CGFloat)accentHue {
+    self = [super init];
+    if (!self) return nil;
+
+    _demoItem = YES;
+    _wrapper = nil;  // No GameFile backs a demo item — never boot one.
+    _title = [title copy];
+    _gameID = [gameID copy];
+    _platform = platform;
+    _makerLong = [maker copy];
+    _countryName = [countryName copy];
+    _fileSize = fileSize;
+    // A path under a directory that does not exist, so any accidental boot
+    // fails cleanly with "file not found" rather than touching real content.
+    _filePath = [NSString stringWithFormat:@"/dev/null/icube-screenshot-demo/%@.rvz", gameID];
+    _id = _filePath;
+    _isNKit = NO;
+    _discNumber = 0;
+    _revision = 0;
+    _apploaderDateString = @"2024/01/09";
+    // Real WAD title IDs are 16 hex digits: an 8-digit type prefix plus the
+    // four-character title code as ASCII hex. Build the same shape so the game
+    // properties screen shows a plausible ID rather than a truncated one.
+    if (platform == 3) {
+        NSMutableString *low = [NSMutableString stringWithCapacity:8];
+        for (NSUInteger i = 0; i < 4; i++) {
+            unichar ch = (i < gameID.length) ? [gameID characterAtIndex:i] : (unichar)'0';
+            [low appendFormat:@"%02X", (unsigned)(ch & 0x7F)];
+        }
+        _titleIDHex = [[NSString stringWithFormat:@"00010001%@", low] lowercaseString];
+    } else {
+        _titleIDHex = nil;
+    }
+    _gametdbID = [gameID copy];
+    _bannerImage = nil;
+
+    NSString *platformLabel;
+    switch (platform) {
+        case 0:  platformLabel = @"Nintendo GameCube"; break;
+        case 2:  platformLabel = @"Nintendo Wii"; break;
+        case 3:  platformLabel = @"WiiWare"; break;
+        default: platformLabel = @"Disc"; break;
+    }
+    _coverImage = DOLDemoCoverImage(_title, platformLabel, accentHue);
+
+    return self;
+}
+
+#endif  // DEBUG
 
 @end

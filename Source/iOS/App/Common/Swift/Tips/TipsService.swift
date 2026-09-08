@@ -25,7 +25,14 @@ import TipKit
 public final class LiveTipsService: TipsProviding {
   public static let shared = LiveTipsService()
   private init() {}
-  public func configure() { try? Tips.configure() }
+  public func configure() {
+    // Screenshot mode photographs the UI itself, and a TipKit coach mark pops
+    // up on its own schedule right on top of the shot. Never configuring TipKit
+    // is the only reliable way to keep it off screen: unlike the one-shot
+    // interstitials, tips have no UserDefaults key to pre-set.
+    if TVLibraryBridge.isScreenshotDemoMode() { return }
+    try? Tips.configure()
+  }
   public func record(event: String) {}
 }
 #endif

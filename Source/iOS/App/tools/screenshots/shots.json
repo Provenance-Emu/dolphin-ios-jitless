@@ -1,0 +1,368 @@
+{
+  "_comment": [
+    "Shot list for icube-emu.com and the App Store.",
+    "",
+    "Steps are declarative; capture.py drives them through RocketSim's",
+    "accessibility tree, so a control that gets renamed is a label fix here",
+    "rather than a code change. Every label/type/value below was taken from a",
+    "real `rocketsim elements --agent --agent-mode act` read, not guessed.",
+    "",
+    "Two matcher notes, both learned the hard way:",
+    "  * label matching is 'contains', so a title like 'Settings' hits both the",
+    "    button and its wrapping group — pair it with \"type\": \"button\".",
+    "  * the library search field has NO accessibility label; 'Search' is its",
+    "    placeholder, carried as the value. Hence type+value for that step.",
+    "",
+    "Filenames (minus .png) are the keys the website's",
+    "scripts/import-screenshots.mjs looks up in captions.json.",
+    "",
+    "Every shot relaunches the app first, so shots are independent and order",
+    "does not matter. 'verify'/'reject' annotate a capture rather than",
+    "discarding it, because a human reviews every PNG before import.",
+    "",
+    "Not covered, and why: gameplay and the pause menu need a booted game, and",
+    "the simulator has no JIT/Vulkan path (and demo entries have no disc image)",
+    "— capture those on a device. The per-game context menu is not reachable:",
+    "GameGridItem's .onLongPressGesture(0.5) enters multi-select and consumes",
+    "the press before .contextMenu can open. The Shaders page is currently a",
+    "debug-checkbox screen rather than a picker, so Graphics ▸ Enhancements is",
+    "the graphics-quality shot instead."
+  ],
+  "devices": {
+    "iphone": [
+      {
+        "name": "library-light.png",
+        "desc": "Library grid, light appearance, favourites row + platform filters",
+        "appearance": "light",
+        "order": 1,
+        "alt": "iCube game library on iPhone showing a grid of cover art",
+        "caption": "Your GameCube and Wii library, with cover art, favourites and platform filters.",
+        "steps": [
+          {
+            "do": "settle",
+            "seconds": 3.0
+          }
+        ],
+        "verify": [
+          "Starfall Rally",
+          "Favorites"
+        ]
+      },
+      {
+        "name": "library-dark.png",
+        "desc": "Library grid, dark appearance",
+        "appearance": "dark",
+        "order": 2,
+        "alt": "iCube game library on iPhone in dark mode",
+        "caption": "Light and dark, everywhere.",
+        "steps": [
+          {
+            "do": "settle",
+            "seconds": 3.0
+          }
+        ],
+        "verify": [
+          "Starfall Rally"
+        ]
+      },
+      {
+        "name": "library-gamecube.png",
+        "desc": "Library filtered to the GameCube platform bucket",
+        "appearance": "dark",
+        "order": 3,
+        "alt": "iCube library filtered to GameCube titles",
+        "caption": "Filter by GameCube, Wii or WiiWare in one tap.",
+        "steps": [
+          {
+            "do": "tap",
+            "label": "GameCube, 6 games",
+            "type": "button",
+            "settle": 2.0
+          }
+        ],
+        "verify": [
+          "Cube Quest"
+        ]
+      },
+      {
+        "name": "search.png",
+        "desc": "Search field focused with a query typed",
+        "appearance": "dark",
+        "order": 4,
+        "alt": "Searching the iCube library",
+        "caption": "Find any title instantly.",
+        "steps": [
+          {
+            "do": "tap",
+            "type": "textField",
+            "value": "Search",
+            "settle": 1.5
+          },
+          {
+            "do": "type",
+            "text": "e",
+            "settle": 2.0
+          }
+        ]
+      },
+      {
+        "name": "settings-root.png",
+        "desc": "Settings root list",
+        "appearance": "dark",
+        "order": 5,
+        "alt": "iCube settings screen",
+        "caption": "Every Dolphin setting, organised for touch.",
+        "steps": [
+          {
+            "do": "tap",
+            "label": "Settings",
+            "type": "button",
+            "settle": 1.0
+          },
+          {
+            "do": "wait",
+            "label": "Graphics Settings",
+            "type": "button",
+            "timeout": 10
+          },
+          {
+            "do": "settle",
+            "seconds": 1.5
+          }
+        ],
+        "verify": [
+          "Graphics Settings",
+          "Controllers"
+        ]
+      },
+      {
+        "name": "settings-graphics.png",
+        "desc": "Graphics ▸ Enhancements — resolution, AF, MSAA",
+        "appearance": "dark",
+        "order": 6,
+        "alt": "Graphics enhancement settings in iCube",
+        "caption": "Render above native resolution, with anisotropic filtering and MSAA.",
+        "steps": [
+          {
+            "do": "tap",
+            "label": "Settings",
+            "type": "button",
+            "settle": 1.0
+          },
+          {
+            "do": "wait",
+            "label": "Graphics Settings",
+            "type": "button",
+            "timeout": 10
+          },
+          {
+            "do": "tap",
+            "label": "Graphics Settings",
+            "type": "button",
+            "settle": 1.0
+          },
+          {
+            "do": "wait",
+            "label": "Enhancements",
+            "type": "button",
+            "timeout": 10
+          },
+          {
+            "do": "tap",
+            "label": "Enhancements",
+            "type": "button",
+            "settle": 1.0
+          },
+          {
+            "do": "wait",
+            "label": "Internal Resolution",
+            "timeout": 10
+          },
+          {
+            "do": "settle",
+            "seconds": 1.5
+          }
+        ],
+        "verify": [
+          "Internal Resolution"
+        ]
+      },
+      {
+        "name": "settings-controllers.png",
+        "desc": "Controller configuration",
+        "appearance": "dark",
+        "order": 7,
+        "alt": "Controller settings in iCube",
+        "caption": "Map MFi, DualSense and Xbox controllers, or use touch controls.",
+        "steps": [
+          {
+            "do": "tap",
+            "label": "Settings",
+            "type": "button",
+            "settle": 1.0
+          },
+          {
+            "do": "wait",
+            "label": "Controllers",
+            "type": "button",
+            "timeout": 10
+          },
+          {
+            "do": "tap",
+            "label": "Controllers",
+            "type": "button",
+            "settle": 1.0
+          },
+          {
+            "do": "settle",
+            "seconds": 2.5
+          }
+        ]
+      }
+    ],
+    "ipad": [
+      {
+        "name": "library-light.png",
+        "desc": "Library grid on iPad, light appearance",
+        "appearance": "light",
+        "order": 1,
+        "alt": "iCube library on iPad Pro",
+        "caption": "A full-size library on iPad.",
+        "steps": [
+          {
+            "do": "settle",
+            "seconds": 3.0
+          }
+        ],
+        "verify": [
+          "Starfall Rally"
+        ]
+      },
+      {
+        "name": "library-dark.png",
+        "desc": "Library grid on iPad, dark appearance",
+        "appearance": "dark",
+        "order": 2,
+        "alt": "iCube library on iPad Pro in dark mode",
+        "caption": "Light and dark, everywhere.",
+        "steps": [
+          {
+            "do": "settle",
+            "seconds": 3.0
+          }
+        ],
+        "verify": [
+          "Starfall Rally"
+        ]
+      },
+      {
+        "name": "settings-root.png",
+        "desc": "Settings root on iPad",
+        "appearance": "dark",
+        "order": 3,
+        "alt": "iCube settings on iPad",
+        "caption": "Every Dolphin setting, organised for touch.",
+        "steps": [
+          {
+            "do": "tap",
+            "label": "Settings",
+            "type": "button",
+            "settle": 1.0
+          },
+          {
+            "do": "wait",
+            "label": "Graphics Settings",
+            "type": "button",
+            "timeout": 10
+          },
+          {
+            "do": "settle",
+            "seconds": 1.5
+          }
+        ]
+      },
+      {
+        "name": "settings-graphics.png",
+        "desc": "Graphics ▸ Enhancements on iPad",
+        "appearance": "dark",
+        "order": 4,
+        "alt": "Graphics enhancement settings on iPad",
+        "caption": "Render above native resolution, with anisotropic filtering and MSAA.",
+        "steps": [
+          {
+            "do": "tap",
+            "label": "Settings",
+            "type": "button",
+            "settle": 1.0
+          },
+          {
+            "do": "wait",
+            "label": "Graphics Settings",
+            "type": "button",
+            "timeout": 10
+          },
+          {
+            "do": "tap",
+            "label": "Graphics Settings",
+            "type": "button",
+            "settle": 1.0
+          },
+          {
+            "do": "wait",
+            "label": "Enhancements",
+            "type": "button",
+            "timeout": 10
+          },
+          {
+            "do": "tap",
+            "label": "Enhancements",
+            "type": "button",
+            "settle": 1.0
+          },
+          {
+            "do": "wait",
+            "label": "Internal Resolution",
+            "timeout": 10
+          },
+          {
+            "do": "settle",
+            "seconds": 1.5
+          }
+        ]
+      }
+    ],
+    "appletv": [
+      {
+        "name": "library.png",
+        "desc": "tvOS library grid",
+        "order": 1,
+        "alt": "iCube library on Apple TV",
+        "caption": "iCube on Apple TV, built for the remote and for controllers.",
+        "steps": [
+          {
+            "do": "settle",
+            "seconds": 4.0
+          }
+        ],
+        "verify": [
+          "Starfall Rally"
+        ]
+      },
+      {
+        "name": "settings-root.png",
+        "desc": "tvOS settings root",
+        "order": 2,
+        "alt": "iCube settings on Apple TV",
+        "caption": "The same settings, on the big screen.",
+        "steps": [
+          {
+            "do": "tap",
+            "label": "Settings",
+            "type": "button",
+            "settle": 3.0
+          }
+        ]
+      }
+    ]
+  }
+}
