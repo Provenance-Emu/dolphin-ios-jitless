@@ -36,6 +36,8 @@ _MAX_FRAME_ADVANCE_PER_CALL = 600
 @dataclass
 class Scenario:
     game_id: str
+    # Presented frames after the pause point; must be >= 1 because the capture
+    # itself presents the last frame (see run_on_device).
     frames: int
     start: str = "boot"
     # Device settings keys (e.g. "gfxHackFastMath"), applied via
@@ -88,8 +90,11 @@ def run_on_device(
         else:
             raise NotImplementedError("state-based scenarios need the STATE_VERSION shim (spec follow-up)")
         dev.post("/api/debug/pause")
-        remaining = sc.frames
-        while remaining:
+        # A paused core never presents, so GET /api/debug/screenshot itself
+        # steps one presented frame to land the capture (DOLDebugBridge.mm).
+        # Advance frames-1 and let the screenshot present frame `frames`.
+        remaining = sc.frames - 1
+        while remaining > 0:
             n = min(_MAX_FRAME_ADVANCE_PER_CALL, remaining)
             dev.post("/api/debug/frame-advance", {"n": n})
             remaining -= n

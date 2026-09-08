@@ -32,7 +32,15 @@ def test_run_on_device_pauses_advances_and_captures():
     d = FakeDevice(solid("red"))
     png = run_on_device(d, Scenario("SMNE01", 30), boot=lambda g: None)
     assert png == d.png
-    assert ("/api/debug/pause", None) in d.calls and ("/api/debug/frame-advance", {"n": 30}) in d.calls
+    # The screenshot route itself presents the last frame (a paused core never
+    # presents), so a 30-frame scenario advances 29 and captures frame 30.
+    assert ("/api/debug/pause", None) in d.calls and ("/api/debug/frame-advance", {"n": 29}) in d.calls
+
+def test_run_on_device_single_frame_needs_no_advance():
+    d = FakeDevice(solid("red"))
+    run_on_device(d, Scenario("SMNE01", 1), boot=lambda g: None)
+    assert not [b for path, b in d.calls if path == "/api/debug/frame-advance"]
+    assert ("/api/debug/pause", None) in d.calls
 
 def test_run_on_device_chunks_frame_advance_over_600():
     # POST /api/debug/frame-advance caps n at 600 per call (DebugAPIRoutes.swift).
@@ -41,7 +49,7 @@ def test_run_on_device_chunks_frame_advance_over_600():
     d = FakeDevice(solid("red"))
     run_on_device(d, Scenario("SMNE01", 900), boot=lambda g: None)
     advance_calls = [body for path, body in d.calls if path == "/api/debug/frame-advance"]
-    assert advance_calls == [{"n": 600}, {"n": 300}]
+    assert advance_calls == [{"n": 600}, {"n": 299}]
 
 def test_run_on_device_pins_and_restores_resolution():
     # Controller ruling (Task 13 review): run_on_device must pin the device's
@@ -51,7 +59,7 @@ def test_run_on_device_pins_and_restores_resolution():
     d = FakeDevice(solid("red"), settings={"gfxEfbScale": {"value": 3}})
     run_on_device(d, Scenario("SMNE01", 30), boot=lambda g: None)
     set_idx = d.calls.index(("/api/settings/gfxEfbScale", {"value": 1}))
-    advance_idx = d.calls.index(("/api/debug/frame-advance", {"n": 30}))
+    advance_idx = d.calls.index(("/api/debug/frame-advance", {"n": 29}))
     restore_idx = d.calls.index(("/api/settings/gfxEfbScale", {"value": 3}))
     assert set_idx < advance_idx < restore_idx
 

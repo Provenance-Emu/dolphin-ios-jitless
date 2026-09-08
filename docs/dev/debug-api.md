@@ -112,9 +112,9 @@ key. `"PerGame"` is the user-editable Local GameSettings INI layer;
 |---|---|---|---|
 | `POST` | `/api/debug/pause` | — | `{state}`; `409` if the core isn't running |
 | `POST` | `/api/debug/resume` | — | `{state}`; `409` if the core isn't running |
-| `POST` | `/api/debug/frame-advance` | `{"n": N}`, required, integer `1...600` | `{frames_advanced, frame_count}`; `409` unless the core is already paused; `504` if fewer than `n` frames land within 5s/frame |
-| `GET` | `/api/debug/frame-count` | — | `{frame_count}` — the emulated frame counter |
-| `GET` | `/api/debug/screenshot` | — | **raw `image/png` bytes**, not the JSON envelope; `504` if no screenshot lands within 3s |
+| `POST` | `/api/debug/frame-advance` | `{"n": N}`, required, integer `1...600` | `{frames_advanced, frame_count}`; `409` unless the core is already paused; `504` if fewer than `n` frames land within 5s/frame. One step = one **presented** frame (Dolphin's frame-step semantics), which is what lines up with the oracle's frame dumps |
+| `GET` | `/api/debug/frame-count` | — | `{frame_count}` — Movie's **VI-frame** counter. It moves by more than `n` per `frame-advance` in games that present below 60 fps (NSMBW cutscene: 60 steps → +82) |
+| `GET` | `/api/debug/screenshot` | — | **raw `image/png` bytes**, not the JSON envelope; `504` if no screenshot lands within 3s. Screenshots land on the next *presented* frame, so when the core is paused this route steps exactly one frame to capture it (the image is the frame after your last `frame-advance`; advance `N-1` for frame `N`) |
 | `GET` | `/api/debug/build-info` | — | SCM revision/branch, app version/build, configuration |
 | `GET` | `/api/debug/render-state` | — | mix of runtime and configured state, distinguished by field name. Runtime (actually observed): backend, internal resolution, active hacks, and `vi_skip_active` (from `Core::System::GetInstance().GetCoreTiming().GetVISkip()`). Configured (from `Config`, NOT verified against the running core — suffixed `_configured`): `cpu_core_configured`, `dual_core_configured`, `vi_skip_mode_configured`, `overclock_enable_configured`, `overclock_configured`, `vi_overclock_configured` |
 | `GET` | `/api/health` | — | `{build_sha, config, game_id, core_state, fps, vps}` |

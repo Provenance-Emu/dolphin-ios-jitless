@@ -94,6 +94,11 @@ class RingListener : public Common::Log::LogListener {
   return YES;
 }
 
+// One step = one PRESENTED frame (Core::DoFrameStep stops on s_stop_frame_step,
+// set by Callback_FramePresented), while frameCount is Movie's VI-frame counter.
+// A 30 fps game therefore moves frame_count by ~2 per step (device: 60 steps ->
+// +82 VI frames in NSMBW's cutscene). Presented-frame steps are what line up
+// with the oracle's per-present frame dumps, so this is the intended unit.
 + (NSInteger)frameAdvance:(NSInteger)n timeoutSeconds:(double)timeout {
   NSInteger done = 0;
   for (NSInteger i = 0; i < n; i++) {
@@ -131,8 +136,17 @@ class RingListener : public Common::Log::LogListener {
   // concurrently mutates config during boot/shutdown is a data race.
   __block std::string gameId;
   DOLHostQueueRunSync(^{
+    Core::System& sys = Core::System::GetInstance();
     Core::SaveScreenShot(name);
     gameId = SConfig::GetInstance().GetGameID();
+    // The request is only serviced by FrameDumper on the next PRESENTED frame
+    // (FrameDumper.cpp: m_screenshot_request.TestAndClear() inside the dump
+    // thread). A paused core never presents, so the poll below would time out
+    // (verified on device 2026-09-08). When paused, step exactly one presented
+    // frame so the request lands; the image is therefore the frame AFTER the
+    // caller's last frame-advance. Callers wanting frame N advance N-1 then
+    // screenshot (scenario.py does this).
+    if (Core::GetState(sys) == Core::State::Paused) Core::DoFrameStep(sys);
   });
   // SaveScreenShot writes <Screenshots>/<GameID>/<name>.png asynchronously (Core::Core.cpp
   // GenerateScreenshotFolderPath + SaveScreenShot(string_view)).
