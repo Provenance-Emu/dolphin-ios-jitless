@@ -169,9 +169,14 @@ struct GameGridItem: View {
     }
   }
 
-  private func handleLongPress() {
+  /// Enters multi-select mode with this game already selected.
+  ///
+  /// `onEnterSelectionMode` already inserts the item into the selection, so this
+  /// must not also call `onToggleSelection` — that would immediately deselect it
+  /// and leave selection mode active with nothing selected (and therefore no
+  /// action bar, which is gated on a non-empty selection).
+  private func enterSelectionMode() {
     onEnterSelectionMode?()
-    onToggleSelection?()
   }
 
   /// Check if we're using the default placeholder cover
@@ -673,7 +678,7 @@ struct GameGridItem: View {
     }
     .overlay(selectionOverlay)
     .onTapGesture { handlePrimaryAction() }
-    .onLongPressGesture(minimumDuration: 0.5) { handleLongPress() }
+    .onLongPressGesture(minimumDuration: 0.5) { enterSelectionMode() }
     .onPlayPauseCommand {
       if selectionMode { handlePrimaryAction() } else { select(item) }
     }
@@ -883,13 +888,20 @@ struct GameGridItem: View {
         .opacity(0)
         .animation(.easeInOut(duration: 0.15), value: UUID())
     )
-    .simultaneousGesture(
-      LongPressGesture(minimumDuration: 0.5).onEnded { _ in handleLongPress() }
-    )
+    // NOTE: no long-press gesture here. On iOS the long press belongs to
+    // `.contextMenu` (UIKit's context-menu interaction cancels any competing
+    // long-press recogniser at ~0.4s anyway, so a gesture here never fired).
+    // Multi-select is entered from the "Select Games" item below, or from the
+    // library's View Options menu.
     .contextMenu {
       // Align with tvOS context menu
       Button(action: { showProperties(item) }) {
         Label(L("Properties"), systemImage: "info.circle")
+      }
+      if !selectionMode {
+        Button(action: { enterSelectionMode() }) {
+          Label(L("Select Games"), systemImage: "checkmark.circle")
+        }
       }
       //            Button(L("View Save States")) { showSaveStates(item) }
 
