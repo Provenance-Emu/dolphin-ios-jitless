@@ -117,7 +117,11 @@ final class NativeWebServer: @unchecked Sendable {
       port: NWEndpoint.Port(rawValue: port)!
     )
 
-    let listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!)
+    // The port is already carried by `requiredLocalEndpoint`. Passing it again via
+    // `NWListener(using:on:)` makes Network.framework reject the listener with
+    // NWError 22 (EINVAL) on iOS 26 — the two port sources conflict — and the
+    // server silently never binds ("[DebugServer] failed to start" in syslog).
+    let listener = try NWListener(using: params)
     listener.newConnectionHandler = { [weak self] conn in
       self?.handleNewConnection(conn)
     }
