@@ -230,6 +230,20 @@ def set_appearance(udid, appearance):
                    capture_output=True, text=True)
 
 
+#: Persisted UI state that a shot can change and that would otherwise leak into
+#: every later shot in the pass. The library's platform filter is @AppStorage,
+#: so after the GameCube-filter shot every later capture still shows the library
+#: filtered. Rewriting the default between launches is only a best-effort fix —
+#: cfprefsd caches a domain the app has already written, so a shot that needs a
+#: specific filter must also select it in its own steps (see shots.json, where
+#: the library and search shots tap "All" first).
+RESET_DEFAULTS = {
+    "library_platform_filter": ("-string", "all"),
+    "library_sort_field": ("-string", "name"),
+    "library_sort_ascending": ("-bool", "YES"),
+}
+
+
 def reset_to_root(udid, bundle_id):
     """Cheapest reliable way back to the library: relaunch.
 
@@ -239,6 +253,12 @@ def reset_to_root(udid, bundle_id):
     """
     subprocess.run(["xcrun", "simctl", "terminate", udid, bundle_id],
                    capture_output=True, text=True)
+    for key, (kind, value) in RESET_DEFAULTS.items():
+        subprocess.run(
+            ["xcrun", "simctl", "spawn", udid, "defaults", "write",
+             bundle_id, key, kind, value],
+            capture_output=True, text=True,
+        )
     time.sleep(0.8)
     subprocess.run(
         ["xcrun", "simctl", "launch", udid, bundle_id, "-SCREENSHOT_MODE", "1"],

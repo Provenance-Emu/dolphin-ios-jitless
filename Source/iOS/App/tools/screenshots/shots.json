@@ -39,8 +39,14 @@
         "caption": "Your GameCube and Wii library, with cover art, favourites and platform filters.",
         "steps": [
           {
+            "do": "tap",
+            "label": "All, 16 games",
+            "type": "button",
+            "settle": 1.5
+          },
+          {
             "do": "settle",
-            "seconds": 3.0
+            "seconds": 2.0
           }
         ],
         "verify": [
@@ -57,8 +63,14 @@
         "caption": "Light and dark, everywhere.",
         "steps": [
           {
+            "do": "tap",
+            "label": "All, 16 games",
+            "type": "button",
+            "settle": 1.5
+          },
+          {
             "do": "settle",
-            "seconds": 3.0
+            "seconds": 2.0
           }
         ],
         "verify": [
@@ -92,6 +104,12 @@
         "alt": "Searching the iCube library",
         "caption": "Find any title instantly.",
         "steps": [
+          {
+            "do": "tap",
+            "label": "All, 16 games",
+            "type": "button",
+            "settle": 1.5
+          },
           {
             "do": "tap",
             "type": "textField",
@@ -230,8 +248,14 @@
         "caption": "Your GameCube and Wii library, with cover art, favourites and platform filters.",
         "steps": [
           {
+            "do": "tap",
+            "label": "All, 16 games",
+            "type": "button",
+            "settle": 1.5
+          },
+          {
             "do": "settle",
-            "seconds": 3.0
+            "seconds": 2.0
           }
         ],
         "verify": [
@@ -247,8 +271,14 @@
         "caption": "Light and dark, everywhere.",
         "steps": [
           {
+            "do": "tap",
+            "label": "All, 16 games",
+            "type": "button",
+            "settle": 1.5
+          },
+          {
             "do": "settle",
-            "seconds": 3.0
+            "seconds": 2.0
           }
         ],
         "verify": [
