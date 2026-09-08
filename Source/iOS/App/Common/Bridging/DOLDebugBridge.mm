@@ -22,6 +22,7 @@
 #include "Core/State.h"
 #include "Core/System.h"
 #include "VideoCommon/VideoConfig.h"
+#include "VideoCommon/FrameDumper.h"
 
 #import "HostQueue.h"
 
@@ -135,6 +136,7 @@ class RingListener : public Common::Log::LogListener {
   // way Core::SaveScreenShot is, and reading it from the server queue while the host thread
   // concurrently mutates config during boot/shutdown is a data race.
   __block std::string gameId;
+  __block bool wasPaused = false;
   DOLHostQueueRunSync(^{
     Core::System& sys = Core::System::GetInstance();
     Core::SaveScreenShot(name);
@@ -146,8 +148,36 @@ class RingListener : public Common::Log::LogListener {
     // frame so the request lands; the image is therefore the frame AFTER the
     // caller's last frame-advance. Callers wanting frame N advance N-1 then
     // screenshot (scenario.py does this).
-    if (Core::GetState(sys) == Core::State::Paused) Core::DoFrameStep(sys);
+    wasPaused = Core::GetState(sys) == Core::State::Paused;
+    if (wasPaused) Core::DoFrameStep(sys);
   });
+  if (wasPaused) {
+    // Wait for the step to land (CPU back in stepping => GetState == Paused).
+    NSDate* stepDeadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
+    while (Core::GetState(Core::System::GetInstance()) != Core::State::Paused) {
+      if ([stepDeadline timeIntervalSinceNow] < 0) return nil;
+      [NSThread sleepForTimeInterval:0.002];
+    }
+    // FrameDumper::DumpCurrentFrame only copies the frame into a readback
+    // texture; the PNG is encoded by FlushFrameDump, which Presenter calls on
+    // the NEXT present. With the core paused that never comes, so the file
+    // appeared ~3.3s later, only when a later request stepped again -- and it
+    // then carried the newer request's name (device log 2026-09-08: every
+    // second consecutive capture "succeeded" with the previous frame). Flush
+    // it here. Single-core: GPU work runs on the (now stepping) CPU thread, so
+    // the host thread may drive it under a CPUThreadGuard, the same contract
+    // Core::SaveScreenShot uses. Dual-core: the video thread owns the
+    // textures; take a second step instead so its Presenter flushes for us.
+    DOLHostQueueRunSync(^{
+      Core::System& sys = Core::System::GetInstance();
+      if (sys.IsDualCoreMode()) {
+        Core::DoFrameStep(sys);
+      } else {
+        const Core::CPUThreadGuard guard(sys);
+        if (g_frame_dumper) g_frame_dumper->FlushFrameDump();
+      }
+    });
+  }
   // SaveScreenShot writes <Screenshots>/<GameID>/<name>.png asynchronously (Core::Core.cpp
   // GenerateScreenshotFolderPath + SaveScreenShot(string_view)).
   std::string path = File::GetUserPath(D_SCREENSHOTS_IDX) + gameId + DIR_SEP_CHR + name + ".png";
